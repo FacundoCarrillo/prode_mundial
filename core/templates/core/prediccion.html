@@ -1,0 +1,59 @@
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="max-w-xl mx-auto mt-10">
+    
+    <div class="bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-200">
+        
+        <div class="bg-slate-900 text-white text-center py-6">
+            <h2 class="text-gray-400 text-xs font-bold uppercase tracking-widest mb-2">Mundial 2026</h2>
+            <div class="flex justify-center items-center space-x-4 text-2xl font-bold">
+                <span>{{ partido.home_team.name }}</span>
+                <span class="text-yellow-500">vs</span>
+                <span>{{ partido.away_team.name }}</span>
+            </div>
+            <p class="text-slate-400 text-sm mt-2">📅 {{ partido.date|date:"l d F, H:i" }} hs</p>
+        </div>
+
+        <div class="p-8">
+            <form method="post" class="space-y-6">
+                {% csrf_token %}
+                
+                <div class="flex items-center justify-center space-x-6">
+                    
+                    <div class="text-center">
+                        <label class="block text-sm font-bold text-gray-500 mb-1">{{ partido.home_team.flag_code|default:"🏠" }} Local</label>
+                        <input type="number" name="predicted_home" min="0" max="20" required
+                               value="{{ form.predicted_home.value|default_if_none:'' }}"
+                               class="w-20 h-20 text-center text-4xl font-bold text-slate-900 border-2 border-gray-300 rounded-lg focus:border-yellow-500 focus:ring-4 focus:ring-yellow-200 outline-none transition">
+                    </div>
+
+                    <div class="text-4xl font-bold text-gray-300">-</div>
+
+                    <div class="text-center">
+                        <label class="block text-sm font-bold text-gray-500 mb-1">{{ partido.away_team.flag_code|default:"✈️" }} Visitante</label>
+                        <input type="number" name="predicted_away" min="0" max="20" required
+                               value="{{ form.predicted_away.value|default_if_none:'' }}"
+                               class="w-20 h-20 text-center text-4xl font-bold text-slate-900 border-2 border-gray-300 rounded-lg focus:border-yellow-500 focus:ring-4 focus:ring-yellow-200 outline-none transition">
+                    </div>
+                </div>
+
+                <div class="pt-4 space-y-3">
+                    <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg transform active:scale-95 transition-all text-lg flex justify-center items-center">
+                        💾 Guardar Pronóstico
+                    </button>
+                    
+                    <a href="{% url 'home' %}" class="block w-full text-center text-slate-500 hover:text-slate-800 font-medium py-2">
+                        Cancelar y volver
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <p class="text-center text-gray-400 text-xs mt-4">
+        *Recuerda: Si acertas el resultado exacto sumas <strong>3 puntos</strong>.
+    </p>
+
+</div>
+{% endblock %}
