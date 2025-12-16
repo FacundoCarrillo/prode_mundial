@@ -1,0 +1,13 @@
+# Archivos de entorno virtual
+venv/
+.env
+
+# Base de datos local
+db.sqlite3
+
+# Archivos compilados de Python
+__pycache__/
+*.pyc
+
+# Carpetas de medios (opcional, por si subimos fotos localmente)
+media/
