@@ -39,7 +39,12 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.sites',
     'core',
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
+    'allauth.socialaccount.providers.google', # Proveedor de Google
 ]
 
 MIDDLEWARE = [
@@ -51,6 +56,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'allauth.account.middleware.AccountMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -140,3 +146,20 @@ LOGIN_REDIRECT_URL = 'home'
 
 # A dónde ir después de desloguearse
 LOGOUT_REDIRECT_URL = 'home'
+
+# --- CONFIGURACIÓN DE ALLAUTH (LOGIN SOCIAL) ---
+
+# --- CONFIGURACIÓN DE ALLAUTH (LOGIN SOCIAL) ---
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+    'allauth.account.auth_backends.AuthenticationBackend',
+]
+
+SITE_ID = 1
+LOGIN_REDIRECT_URL = '/'
+LOGOUT_REDIRECT_URL = '/'
+
+# Configuración Moderna (Para evitar Warnings)
+ACCOUNT_LOGIN_METHODS = {'email'}  # Loguearse con email
+ACCOUNT_EMAIL_VERIFICATION = 'none' # No pedir confirmar mail por ahora
+ACCOUNT_EMAIL_REQUIRED = True

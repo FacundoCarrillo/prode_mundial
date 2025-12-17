@@ -1,0 +1,75 @@
+{% extends 'core/base.html' %}
+{% load socialaccount %}
+{% load i18n %}
+
+{% block content %}
+<div class="flex items-center justify-center min-h-[80vh]">
+    <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-md border border-gray-200">
+        
+        <div class="text-center mb-6">
+            <h2 class="text-3xl font-bold text-slate-800">Crear Cuenta</h2>
+            <p class="text-gray-500 text-sm mt-2">Únete para jugar al Prode</p>
+        </div>
+
+        <div class="mb-6">
+            {% get_providers as socialaccount_providers %}
+            {% if socialaccount_providers %}
+            <a href="{% provider_login_url 'google' %}?next=/" 
+               class="flex items-center justify-center w-full bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-bold py-3 px-4 rounded-md transition duration-200 shadow-sm gap-3">
+                <img src="https://www.svgrepo.com/show/475656/google-color.svg" class="w-5 h-5" alt="Logo Google">
+                Registrarse con Google
+            </a>
+            {% endif %}
+        </div>
+
+        <div class="relative flex py-2 items-center mb-6">
+            <div class="flex-grow border-t border-gray-300"></div>
+            <span class="flex-shrink mx-4 text-gray-400 text-sm">O usa tu email</span>
+            <div class="flex-grow border-t border-gray-300"></div>
+        </div>
+
+        <form class="signup" id="signup_form" method="post" action="{% url 'account_signup' %}">
+            {% csrf_token %}
+
+            {% if form.non_field_errors %}
+                <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 text-sm">
+                    {% for error in form.non_field_errors %}
+                        {{ error }}
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            <div class="space-y-4">
+                {% for field in form %}
+                <div>
+                    <label class="block text-gray-700 text-sm font-bold mb-2">{{ field.label }}</label>
+                    <input type="{{ field.field.widget.input_type }}" 
+                           name="{{ field.name }}" 
+                           id="{{ field.id_for_label }}"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                           {% if field.field.required %}required{% endif %}
+                           placeholder="{{ field.label }}">
+                    
+                    {% if field.errors %}
+                        <p class="text-red-500 text-xs italic mt-1">{{ field.errors.0 }}</p>
+                    {% endif %}
+                    
+                    {% if field.help_text %}
+                        <p class="text-gray-400 text-xs mt-1">{{ field.help_text|safe }}</p>
+                    {% endif %}
+                </div>
+                {% endfor %}
+
+                <button type="submit" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 px-4 rounded-md transition duration-200 mt-2">
+                    Registrarse
+                </button>
+            </div>
+        </form>
+
+        <p class="text-center text-gray-500 text-xs mt-6">
+            ¿Ya tienes cuenta? 
+            <a href="{% url 'account_login' %}" class="text-blue-600 hover:underline">Ingresa aquí</a>
+        </p>
+    </div>
+</div>
+{% endblock %}

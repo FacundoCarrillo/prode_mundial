@@ -23,12 +23,14 @@ from core.views import home, predecir_partido, ranking, actualizar_partidos_web 
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    # Esta línea activa todas las URLs de autenticación (login, logout, password_change, etc.)
-    path('accounts/', include('django.contrib.auth.urls')),
+
+    # --- CAMBIO AQUÍ ---
+    # Reemplazamos la línea vieja por esta nueva.
+    # 'allauth.urls' maneja Login, Logout, Registro y... ¡GOOGLE!
+    path('accounts/', include('allauth.urls')),
+
     path('', home, name='home'),
-    # <int:match_id> es la variable que cambia (el ID del partido)
     path('predecir/<int:match_id>/', predecir_partido, name='predecir'),
     path('ranking/', ranking, name='ranking'),
-    # --- LA URL MÁGICA ---
     path('actualizar-ahora/', actualizar_partidos_web, name='actualizar_web'),
 ]
