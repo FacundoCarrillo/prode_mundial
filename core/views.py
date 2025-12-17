@@ -7,6 +7,7 @@ from django.utils import timezone # <--- IMPORTANTE
 from django.core.management import call_command
 from django.contrib.admin.views.decorators import staff_member_required
 from django.http import HttpResponse
+import io
 
 def home(request):
     # 1. Traemos todos los partidos
@@ -94,11 +95,25 @@ def ranking(request):
 
     return render(request, 'core/ranking.html', {'ranking': lista_ranking})
 
-@staff_member_required # <--- IMPORTANTE: Solo el admin puede usar esto
+@staff_member_required
 def actualizar_partidos_web(request):
-    # Llama a tu comando 'actualizar_partidos' como si estuvieras en la terminal
+    # Creamos una "hoja en blanco" en memoria para anotar lo que diga el script
+    out = io.StringIO()
+    
     try:
-        call_command('actualizar_partidos')
-        return HttpResponse("✅ ¡Partidos actualizados correctamente desde la API!")
+        # Ejecutamos el comando y le decimos que escriba en nuestra hoja (out)
+        call_command('actualizar_partidos', stdout=out)
+        
+        # Obtenemos todo el texto escrito
+        resultado = out.getvalue()
+        
+        # Lo mostramos en pantalla con formato <pre> para que se lea ordenado
+        return HttpResponse(f"""
+            <h1>Reporte de Actualización</h1>
+            <pre style="background: #f4f4f4; padding: 15px; border-radius: 5px;">{resultado}</pre>
+            <br>
+            <a href="/">⬅ Volver al Inicio</a>
+        """)
+        
     except Exception as e:
         return HttpResponse(f"❌ Error al actualizar: {str(e)}")
