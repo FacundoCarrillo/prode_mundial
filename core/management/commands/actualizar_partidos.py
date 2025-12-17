@@ -42,6 +42,16 @@ class Command(BaseCommand):
                     continue # Salta a la siguiente fecha
 
                 data = response.json()
+                # --- NUEVO: DIAGNÓSTICO DE ERRORES ---
+                # Verificamos si la API nos está gritando un error silencioso
+                errores = data.get('errors')
+                if errores:
+                # Si hay errores (ej: cuota excedida, plan bloqueado), los imprimimos
+                # A veces 'errors' es una lista y a veces un diccionario, esto lo maneja:
+                self.stdout.write(self.style.WARNING(f"⚠️ ALERTA API en {fecha_str}: {errores}"))
+                continue # Saltamos al siguiente día
+                # -------------------------------------
+
                 partidos_api = data.get('response', [])
                 
                 self.stdout.write(f"   --> Encontrados en API: {len(partidos_api)} partidos")
