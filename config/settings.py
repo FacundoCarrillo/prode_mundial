@@ -163,3 +163,20 @@ LOGOUT_REDIRECT_URL = '/'
 ACCOUNT_LOGIN_METHODS = {'email'}  # Loguearse con email
 ACCOUNT_EMAIL_VERIFICATION = 'none' # No pedir confirmar mail por ahora
 ACCOUNT_EMAIL_REQUIRED = True
+
+# --- SEGURIDAD PARA RENDER ---
+CSRF_TRUSTED_ORIGINS = ['https://prode-mundial-kczg.onrender.com']
+
+# --- CONFIGURACIÓN PARA RENDER (SOLUCIÓN ERROR 400) ---
+import os
+
+# Si estamos en Render, forzamos HTTPS
+if os.environ.get('RENDER'):
+    # Le avisa a Django que está detrás de un proxy seguro
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    # Forza a que los links de login sean HTTPS
+    ACCOUNT_DEFAULT_HTTP_PROTOCOL = 'https'
+    # Seguridad extra recomendada
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
