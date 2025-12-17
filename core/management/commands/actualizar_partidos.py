@@ -16,7 +16,7 @@ class Command(BaseCommand):
         }
         # Usamos la fecha que te dio resultados (el 14 o 15 de dic)
         params = {
-            'date': '2025-12-15' 
+            'date': '2025-12-17' 
         }
 
         response = requests.get(url, headers=headers, params=params)
