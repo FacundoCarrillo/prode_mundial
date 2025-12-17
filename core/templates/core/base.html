@@ -23,10 +23,16 @@
                 </div>
 
                 <div class="flex items-center space-x-4">
+                    
                     <a href="{% url 'ranking' %}" class="text-gray-300 hover:bg-slate-800 hover:text-white px-3 py-2 rounded-md text-sm font-medium">
                         🏆 Tabla de Posiciones
                     </a>
 
+                    {% if user.is_staff %}
+                        <a href="{% url 'actualizar_web' %}" class="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-md text-xs font-bold uppercase tracking-wider flex items-center border border-red-800 shadow-sm transition" title="Actualizar resultados desde la API">
+                            🔄 Actualizar
+                        </a>
+                    {% endif %}
                     {% if user.is_authenticated %}
                         <div class="flex items-center space-x-4 bg-slate-800 px-3 py-1 rounded-full">
                             <span class="text-sm text-yellow-400 font-semibold">{{ user.username }}</span>
