@@ -23,9 +23,8 @@
                 </div>
 
                 <div class="flex items-center space-x-4">
-                    
-                    <a href="{% url 'ranking' %}" class="text-gray-300 hover:bg-slate-800 hover:text-white px-3 py-2 rounded-md text-sm font-medium">
-                        🏆 Tabla de Posiciones
+                    <a href="{% url 'mis_torneos' %}" class="text-gray-300 hover:bg-slate-800 hover:text-white px-3 py-2 rounded-md text-sm font-medium">
+                        ⚔️ Mis Torneos
                     </a>
 
                     {% if user.is_staff %}
@@ -52,8 +51,35 @@
     </nav>
 
     <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {% block content %}
-        {% endblock %}
+        {% if messages %}
+        <div class="max-w-4xl mx-auto mt-6 px-4">
+            {% for message in messages %}
+                <div class="p-4 mb-4 rounded-md shadow-sm border flex items-center
+                    {% if message.tags == 'error' %} 
+                        bg-red-50 text-red-700 border-red-200 
+                    {% elif message.tags == 'success' %} 
+                        bg-green-50 text-green-700 border-green-200 
+                    {% elif message.tags == 'warning' %} 
+                        bg-yellow-50 text-yellow-700 border-yellow-200 
+                    {% else %} 
+                        bg-blue-50 text-blue-700 border-blue-200 
+                    {% endif %}">
+                    
+                    <span class="mr-2 text-xl">
+                        {% if message.tags == 'error' %}🚫
+                        {% elif message.tags == 'success' %}✅
+                        {% elif message.tags == 'warning' %}⚠️
+                        {% else %}{% endif %}
+                    </span>
+                    
+                    <span class="font-medium">{{ message }}</span>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    {% block content %}
+    {% endblock %}
     </main>
 
     <footer class="bg-slate-900 text-gray-400 py-6 mt-auto">

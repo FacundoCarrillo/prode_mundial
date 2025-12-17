@@ -147,9 +147,7 @@ LOGIN_REDIRECT_URL = 'home'
 # A dónde ir después de desloguearse
 LOGOUT_REDIRECT_URL = 'home'
 
-# --- CONFIGURACIÓN DE ALLAUTH (LOGIN SOCIAL) ---
-
-# --- CONFIGURACIÓN DE ALLAUTH (LOGIN SOCIAL) ---
+# --- CONFIGURACIÓN DE ALLAUTH (A PRUEBA DE ERRORES) ---
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
     'allauth.account.auth_backends.AuthenticationBackend',
@@ -159,10 +157,15 @@ SITE_ID = 1
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/'
 
-# Configuración Moderna (Para evitar Warnings)
-ACCOUNT_LOGIN_METHODS = {'email'}  # Loguearse con email
-ACCOUNT_EMAIL_VERIFICATION = 'none' # No pedir confirmar mail por ahora
+# Configuración Clásica
+# 1. Permitir entrar con Email
+ACCOUNT_AUTHENTICATION_METHOD = 'email' 
+# 2. El email es obligatorio
 ACCOUNT_EMAIL_REQUIRED = True
+# 3. No verificar el email (para no trabarnos ahora)
+ACCOUNT_EMAIL_VERIFICATION = 'none'
+# 4. El usuario también es obligatorio (necesitamos un nombre para la tabla de posiciones)
+ACCOUNT_USERNAME_REQUIRED = True
 
 # --- SEGURIDAD PARA RENDER ---
 CSRF_TRUSTED_ORIGINS = ['https://prode-mundial-kczg.onrender.com']

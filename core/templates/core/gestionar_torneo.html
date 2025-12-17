@@ -1,0 +1,96 @@
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+    
+    <div class="mb-8 flex justify-between items-center">
+        <div>
+            <a href="{% url 'mis_torneos' %}" class="text-gray-500 hover:text-slate-800 text-sm font-bold mb-2 block">&larr; Volver</a>
+            <h1 class="text-3xl font-bold text-slate-800">⚙️ Gestionar: {{ torneo.name }}</h1>
+            <p class="text-gray-500">Código de invitación: <span class="font-mono bg-yellow-100 px-2 py-1 rounded font-bold text-slate-800 select-all">{{ torneo.code }}</span></p>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-lg shadow-md border border-orange-200 mb-8 overflow-hidden">
+        <div class="bg-orange-50 px-6 py-4 border-b border-orange-100 flex justify-between items-center">
+            <h2 class="text-lg font-bold text-orange-800">⏳ Solicitudes Pendientes</h2>
+            <span class="bg-orange-200 text-orange-800 text-xs font-bold px-2 py-1 rounded-full">{{ pendientes.count }}</span>
+        </div>
+
+        {% if pendientes %}
+            <ul class="divide-y divide-gray-100">
+                {% for solicitud in pendientes %}
+                <li class="px-6 py-4 flex items-center justify-between hover:bg-orange-50/30 transition">
+                    <div class="flex items-center">
+                        <div class="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center font-bold text-slate-600 mr-3">
+                            {{ solicitud.user.username|slice:":1"|upper }}
+                        </div>
+                        <div>
+                            <p class="font-bold text-slate-800">{{ solicitud.user.username }}</p>
+                            <p class="text-xs text-gray-500">{{ solicitud.user.email }}</p>
+                        </div>
+                    </div>
+                    
+                    <div class="flex space-x-2">
+                        <a href="{% url 'responder_solicitud' solicitud.id 'rechazar' %}" 
+                           class="bg-white border border-red-200 text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-md text-sm font-bold transition">
+                            Rechazar
+                        </a>
+                        <a href="{% url 'responder_solicitud' solicitud.id 'aceptar' %}" 
+                           class="bg-green-500 text-white hover:bg-green-600 px-3 py-1.5 rounded-md text-sm font-bold shadow-sm transition">
+                            ✅ Aceptar
+                        </a>
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <div class="p-8 text-center text-gray-400">
+                <p>No hay solicitudes pendientes por ahora.</p>
+            </div>
+        {% endif %}
+    </div>
+
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-100">
+            <h2 class="text-lg font-bold text-slate-700">👥 Participantes Activos ({{ aceptados.count }})</h2>
+        </div>
+        <div class="p-6">
+            <div class="flex flex-wrap gap-2">
+                {% for miembro in aceptados %}
+                    <div class="inline-flex items-center bg-gray-100 px-3 py-1 rounded-full border border-gray-200">
+                        <span class="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
+                        <span class="text-sm font-medium text-gray-700">
+                            {{ miembro.user.username }} 
+                            {% if miembro.user == torneo.creator %}<span class="text-xs text-blue-500 font-bold ml-1">(Admin)</span>{% endif %}
+                        </span>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+</div>
+<div class="mt-12 border-t-2 border-red-100 pt-8">
+        <div class="bg-red-50 p-6 rounded-lg border border-red-200 flex justify-between items-center">
+            <div>
+                <h3 class="text-lg font-bold text-red-800">Zona de Peligro</h3>
+                <p class="text-sm text-red-600">Esta acción no se puede deshacer. Se borrará el torneo y todos los puntajes asociados.</p>
+            </div>
+            
+            <button onclick="confirmarEliminacion()" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded shadow transition">
+                🗑️ Eliminar Torneo
+            </button>
+        </div>
+    </div>
+
+    <script>
+        function confirmarEliminacion() {
+            if (confirm('¿Estás SEGURO de que quieres eliminar este torneo?\n\nEsta acción es irreversible.')) {
+                window.location.href = "{% url 'eliminar_torneo' torneo.id %}";
+            }
+        }
+    </script>
+
+</div> 
+{% endblock %}

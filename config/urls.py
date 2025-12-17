@@ -19,7 +19,7 @@ from django.urls import path
 from core.views import home, predecir_partido # <--- Importamos la nueva vista
 from core.views import home, predecir_partido, ranking  # <--- Agregamos ranking
 from django.urls import path, include # <--- Agrega include aquí
-from core.views import home, predecir_partido, ranking, actualizar_partidos_web # <--- Importala
+from core.views import home, predecir_partido, ranking, actualizar_partidos_web, mis_torneos, buscar_torneo, unirse_torneo, gestionar_torneo, responder_solicitud, eliminar_torneo # <--- Importala
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -31,6 +31,15 @@ urlpatterns = [
 
     path('', home, name='home'),
     path('predecir/<int:match_id>/', predecir_partido, name='predecir'),
-    path('ranking/', ranking, name='ranking'),
+    path('ranking/<int:tournament_id>/', ranking, name='ranking_torneo'),
     path('actualizar-ahora/', actualizar_partidos_web, name='actualizar_web'),
+    path('mis-torneos/', mis_torneos, name='mis_torneos'),
+    path('buscar-torneo/', buscar_torneo, name='buscar_torneo'),
+    path('unirse/<int:tournament_id>/', unirse_torneo, name='unirse_torneo'),
+    # Panel de control del dueño del torneo
+    path('torneo/<int:tournament_id>/gestionar/', gestionar_torneo, name='gestionar_torneo'),
+    
+    # Acción de aceptar/rechazar (recibe el ID del MIEMBRO, no del torneo)
+    path('solicitud/<int:member_id>/<str:accion>/', responder_solicitud, name='responder_solicitud'),
+    path('torneo/<int:tournament_id>/eliminar/', eliminar_torneo, name='eliminar_torneo'),
 ]

@@ -1,5 +1,8 @@
 from django.db import models
 from django.contrib.auth.models import User
+import uuid # <--- Agrega esto arriba de todo
+import random
+import string
 
 # Modelo para los Equipos (Ej: Argentina, Brasil)
 class Team(models.Model):
@@ -65,3 +68,46 @@ class Prediction(models.Model):
         
         # 3. Nada
         return 0
+class Tournament(models.Model):
+    name = models.CharField(max_length=100, verbose_name="Nombre del Torneo")
+    # Generamos un código único corto (Ej: "A7X9") para compartir
+    code = models.CharField(max_length=6, unique=True, verbose_name="Código de Invitación")
+    creator = models.ForeignKey(User, on_delete=models.CASCADE, related_name="created_tournaments")
+    image = models.URLField(blank=True, null=True, verbose_name="Imagen (URL)")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # Relación con usuarios a través de la tabla intermedia
+    members = models.ManyToManyField(User, through='TournamentMember', related_name="tournaments")
+
+    def save(self, *args, **kwargs):
+        # Si no tiene código, generamos uno aleatorio de 6 letras/números
+        if not self.code:
+            self.code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name
+
+class TournamentMember(models.Model):
+    STATUS_CHOICES = [
+        ('PENDING', 'Pendiente de Aprobación'),
+        ('ACCEPTED', 'Aceptado / Jugando'),
+        ('REJECTED', 'Rechazado'),
+    ]
+
+    tournament = models.ForeignKey(Tournament, on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
+    joined_at = models.DateTimeField(auto_now_add=True)
+    
+    # Puntaje acumulado SOLO en este torneo
+    points = models.IntegerField(default=0) 
+
+    class Meta:
+        # Evita que un usuario se una dos veces al mismo torneo
+        unique_together = ('tournament', 'user')
+        verbose_name = "Miembro de Torneo"
+        verbose_name_plural = "Miembros de Torneo"
+
+    def __str__(self):
+        return f"{self.user.username} en {self.tournament.name} ({self.status})"
