@@ -4,6 +4,9 @@ from .forms import PredictionForm
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.utils import timezone # <--- IMPORTANTE
+from django.core.management import call_command
+from django.contrib.admin.views.decorators import staff_member_required
+from django.http import HttpResponse
 
 def home(request):
     # 1. Traemos todos los partidos
@@ -90,3 +93,12 @@ def ranking(request):
     lista_ranking.sort(key=lambda x: x['puntos'], reverse=True)
 
     return render(request, 'core/ranking.html', {'ranking': lista_ranking})
+
+@staff_member_required # <--- IMPORTANTE: Solo el admin puede usar esto
+def actualizar_partidos_web(request):
+    # Llama a tu comando 'actualizar_partidos' como si estuvieras en la terminal
+    try:
+        call_command('actualizar_partidos')
+        return HttpResponse("✅ ¡Partidos actualizados correctamente desde la API!")
+    except Exception as e:
+        return HttpResponse(f"❌ Error al actualizar: {str(e)}")

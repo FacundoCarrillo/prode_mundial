@@ -19,6 +19,7 @@ from django.urls import path
 from core.views import home, predecir_partido # <--- Importamos la nueva vista
 from core.views import home, predecir_partido, ranking  # <--- Agregamos ranking
 from django.urls import path, include # <--- Agrega include aquí
+from core.views import home, predecir_partido, ranking, actualizar_partidos_web # <--- Importala
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -28,4 +29,6 @@ urlpatterns = [
     # <int:match_id> es la variable que cambia (el ID del partido)
     path('predecir/<int:match_id>/', predecir_partido, name='predecir'),
     path('ranking/', ranking, name='ranking'),
+    # --- LA URL MÁGICA ---
+    path('actualizar-ahora/', actualizar_partidos_web, name='actualizar_web'),
 ]
