@@ -22,8 +22,8 @@ class Command(BaseCommand):
 
         # Calculamos rango: Desde Ayer hasta Mañana
         hoy = timezone.now().date()
-        ayer = hoy - timedelta(days=1)
-        manana = hoy + timedelta(days=1)
+        ayer = hoy - timedelta(days=4)
+        manana = hoy + timedelta(days=5)
 
         # En esta API podemos pedir todo junto en una sola llamada
         params = {
