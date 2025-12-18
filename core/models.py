@@ -33,6 +33,9 @@ class Prediction(models.Model):
     
     predicted_home = models.IntegerField(verbose_name="Predicción Local")
     predicted_away = models.IntegerField(verbose_name="Predicción Visitante")
+    # --- AGREGA ESTA LÍNEA NUEVA ---
+    points = models.IntegerField(default=0) 
+    # -------------------------------
     
     def __str__(self):
         return f"{self.user.username}: {self.predicted_home}-{self.predicted_away}"
