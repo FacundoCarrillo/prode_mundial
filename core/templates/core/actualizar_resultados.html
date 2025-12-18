@@ -1,0 +1,51 @@
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+    
+    <div class="mb-6 flex justify-between items-center">
+        <h1 class="text-2xl font-bold text-slate-800">📡 Reporte de Conexión API</h1>
+        <a href="{% url 'mis_torneos' %}" class="bg-blue-600 text-white px-4 py-2 rounded-md font-bold hover:bg-blue-700">
+            &larr; Volver a Mis Torneos
+        </a>
+    </div>
+
+    <div class="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
+        <table class="w-full text-left text-sm">
+            <thead class="bg-slate-100 text-slate-600 uppercase font-bold">
+                <tr>
+                    <th class="px-4 py-3">Partido (API)</th>
+                    <th class="px-4 py-3">Resultado</th>
+                    <th class="px-4 py-3">Estado</th>
+                    <th class="px-4 py-3">Acción en DB</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                {% for item in reporte %}
+                <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-3 font-medium">{{ item.partido }}</td>
+                    <td class="px-4 py-3 font-mono bg-gray-50 text-center font-bold">{{ item.resultado }}</td>
+                    <td class="px-4 py-3">
+                        <span class="px-2 py-1 rounded-full text-xs font-bold
+                            {% if item.estado == 'FINISHED' %}bg-green-100 text-green-800
+                            {% elif item.estado == 'IN_PLAY' %}bg-red-100 text-red-800 animate-pulse
+                            {% else %}bg-gray-100 text-gray-800{% endif %}">
+                            {{ item.estado }}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 text-slate-600">
+                        {{ item.accion }}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="4" class="px-4 py-8 text-center text-gray-500">
+                        No se encontraron partidos en el rango de fechas de la API.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
