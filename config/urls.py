@@ -20,6 +20,7 @@ from core.views import home, predecir_partido # <--- Importamos la nueva vista
 from core.views import home, predecir_partido, ranking  # <--- Agregamos ranking
 from django.urls import path, include # <--- Agrega include aquí
 from core.views import home, predecir_partido, ranking, actualizar_partidos_web, mis_torneos, buscar_torneo, unirse_torneo, gestionar_torneo, responder_solicitud, eliminar_torneo # <--- Importala
+from core.views import correr_migraciones_web
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -42,4 +43,5 @@ urlpatterns = [
     # Acción de aceptar/rechazar (recibe el ID del MIEMBRO, no del torneo)
     path('solicitud/<int:member_id>/<str:accion>/', responder_solicitud, name='responder_solicitud'),
     path('torneo/<int:tournament_id>/eliminar/', eliminar_torneo, name='eliminar_torneo'),
+    path('migrar-emergencia/', correr_migraciones_web),
 ]
