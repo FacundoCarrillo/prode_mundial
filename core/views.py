@@ -131,7 +131,7 @@ def actualizar_partidos_web(request):
         return redirect('home')
 
     # --- TU TOKEN REAL AQUÍ ---
-    API_TOKEN = 'TU_TOKEN_REAL_AQUI' # <--- REVISA QUE ESTÉ TU TOKEN PUESTO
+    API_TOKEN = '1988cfde850245faaaceaf5d9ff33ada' # <--- REVISA QUE ESTÉ TU TOKEN PUESTO
     # --------------------------
     
     base_url = "https://api.football-data.org/v4/matches"
