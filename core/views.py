@@ -359,3 +359,19 @@ def eliminar_torneo(request, tournament_id):
     messages.success(request, f"El torneo '{nombre}' ha sido eliminado correctamente.")
     
     return redirect('mis_torneos')
+
+# --- AGREGAR AL FINAL DE core/views.py ---
+from django.core.management import call_command
+from django.http import HttpResponse
+
+def correr_migraciones_web(request):
+    try:
+        # 1. Le decimos a Django: "Fíjate qué cambios hubo en models.py" (Crea el archivo de migración)
+        call_command('makemigrations')
+        
+        # 2. Le decimos: "Aplica esos cambios a la base de datos real"
+        call_command('migrate')
+        
+        return HttpResponse("✅ ¡ÉXITO! Se agregó la columna 'points' y la base de datos está actualizada.")
+    except Exception as e:
+        return HttpResponse(f"❌ Error al migrar: {e}")
