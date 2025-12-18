@@ -132,7 +132,7 @@ def actualizar_partidos_web(request):
 
     # 1. CONEXIÓN A LA API (Usamos la lógica de Football-Data.org que ya tienes)
     # --- TU TOKEN AQUÍ (Cópialo de tu archivo settings o ponlo directo) ---
-    API_TOKEN = 'TU_TOKEN_AQUI'  # <--- ¡REVISA QUE SEA EL TUYO!
+    API_TOKEN = '1988cfde850245faaaceaf5d9ff33ada'  # <--- ¡REVISA QUE SEA EL TUYO!
     # ---------------------------------------------------------------------
     
     base_url = "https://api.football-data.org/v4/matches"
