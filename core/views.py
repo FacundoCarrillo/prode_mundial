@@ -130,15 +130,14 @@ def actualizar_partidos_web(request):
         messages.error(request, "Solo el administrador puede actualizar partidos.")
         return redirect('home')
 
-    # 1. CONEXIÓN A LA API (Usamos la lógica de Football-Data.org que ya tienes)
-    # --- TU TOKEN AQUÍ (Cópialo de tu archivo settings o ponlo directo) ---
-    API_TOKEN = '1988cfde850245faaaceaf5d9ff33ada'  # <--- ¡REVISA QUE SEA EL TUYO!
-    # ---------------------------------------------------------------------
+    # --- TU TOKEN REAL AQUÍ ---
+    API_TOKEN = 'TU_TOKEN_REAL_AQUI' # <--- REVISA QUE ESTÉ TU TOKEN PUESTO
+    # --------------------------
     
     base_url = "https://api.football-data.org/v4/matches"
     headers = {'X-Auth-Token': API_TOKEN}
     
-    # Buscamos rango amplio (4 días atrás y 5 adelante)
+    # Rango de fechas
     hoy = timezone.now().date()
     ayer = hoy - timedelta(days=4)
     manana = hoy + timedelta(days=5)
@@ -148,79 +147,87 @@ def actualizar_partidos_web(request):
         'dateTo': manana.strftime('%Y-%m-%d')
     }
 
+    reporte = [] # <--- Lista para guardar lo que vemos
+
     try:
         response = requests.get(base_url, headers=headers, params=params)
         data = response.json()
         
         if 'matches' in data:
             for item in data['matches']:
-                # Datos de la API
-                nombre_local = item['homeTeam']['name']
-                nombre_visitante = item['awayTeam']['name']
+                local = item['homeTeam']['name']
+                visitante = item['awayTeam']['name']
                 goles_local = item['score']['fullTime']['home']
                 goles_visitante = item['score']['fullTime']['away']
-                estado = item['status'] # FINISHED, IN_PLAY, TIMED
+                estado = item['status']
+                
+                # Info para el reporte
+                info_partido = {
+                    'partido': f"{local} vs {visitante}",
+                    'resultado': f"{goles_local} - {goles_visitante}" if goles_local is not None else "- vs -",
+                    'estado': estado,
+                    'accion': 'Ignorado (No existe en DB)'
+                }
 
-                # Buscar partido en DB (Búsqueda laxa por nombre)
-                partido = Match.objects.filter(
-                    home_team__name__icontains=nombre_local,
-                    away_team__name__icontains=nombre_visitante
+                # Buscar en DB
+                partido_db = Match.objects.filter(
+                    home_team__name__icontains=local,
+                    away_team__name__icontains=visitante
                 ).first()
 
-                if partido:
-                    # A. Actualizar Goles y Estado
-                    if goles_local is not None and goles_visitante is not None:
-                        partido.home_goals = goles_local
-                        partido.away_goals = goles_visitante
-                        partido.date = item['utcDate'] # Actualizamos hora por si cambió
-                        partido.save()
+                if partido_db:
+                    info_partido['accion'] = '✅ Actualizado'
+                    
+                    # Actualizar datos
+                    if goles_local is not None:
+                        partido_db.home_goals = goles_local
+                        partido_db.away_goals = goles_visitante
+                    
+                    partido_db.date = item['utcDate']
+                    partido_db.save()
 
-                        # B. CALCULAR PUNTOS DE PREDICCIONES (¡NUEVO!) 🧮
-                        # Solo calculamos si el partido terminó o está jugándose
-                        predicciones = Prediction.objects.filter(match=partido)
+                    # Calcular Puntos
+                    preds = Prediction.objects.filter(match=partido_db)
+                    puntos_repartidos = 0
+                    
+                    for pred in preds:
+                        pts = 0
+                        if pred.predicted_home == goles_local and pred.predicted_away == goles_visitante:
+                            pts = 3
+                        else:
+                            # Lógica simple de ganador
+                            winner_real = "H" if goles_local > goles_visitante else "A" if goles_visitante > goles_local else "D"
+                            winner_pred = "H" if pred.predicted_home > pred.predicted_away else "A" if pred.predicted_away > pred.predicted_home else "D"
+                            if winner_real == winner_pred:
+                                pts = 1
                         
-                        for pred in predicciones:
-                            puntos_obtenidos = 0
+                        if pred.points != pts:
+                            pred.points = pts
+                            pred.save()
+                            puntos_repartidos += 1
                             
-                            # Regla: 3 Puntos por Resultado Exacto
-                            if pred.predicted_home == goles_local and pred.predicted_away == goles_visitante:
-                                puntos_obtenidos = 3
-                            
-                            # Regla: 1 Punto por acertar Ganador/Empate (pero no exacto)
-                            else:
-                                real_winner = "HOME" if goles_local > goles_visitante else "AWAY" if goles_visitante > goles_local else "DRAW"
-                                pred_winner = "HOME" if pred.predicted_home > pred.predicted_away else "AWAY" if pred.predicted_away > pred.predicted_home else "DRAW"
-                                
-                                if real_winner == pred_winner:
-                                    puntos_obtenidos = 1
-                            
-                            # Guardamos los puntos en la predicción individual
-                            if pred.points != puntos_obtenidos:
-                                pred.points = puntos_obtenidos
-                                pred.save()
+                    if puntos_repartidos > 0:
+                        info_partido['accion'] += f" y Puntos Recalculados ({puntos_repartidos} preds)"
 
-            # C. ACTUALIZAR PUNTAJES EN LOS TORNEOS (¡MAGIA!) ✨
-            # Recorremos a TODOS los miembros de torneos y recalculamos su total
-            miembros_activos = TournamentMember.objects.filter(status='ACCEPTED')
-            
-            for miembro in miembros_activos:
-                # Sumamos TODOS los puntos de las predicciones de este usuario
-                total = Prediction.objects.filter(user=miembro.user).aggregate(Sum('points'))['points__sum'] or 0
-                
-                # Actualizamos su puntaje en ESTE torneo
-                if miembro.points != total:
-                    miembro.points = total
-                    miembro.save()
-            
-            messages.success(request, "✅ Resultados actualizados y puntos de torneos recalculados.")
-        
+                reporte.append(info_partido)
+
+            # Recalcular Torneos Globalmente
+            miembros = TournamentMember.objects.filter(status='ACCEPTED')
+            for m in miembros:
+                total = Prediction.objects.filter(user=m.user).aggregate(Sum('points'))['points__sum'] or 0
+                if m.points != total:
+                    m.points = total
+                    m.save()
+
         else:
-            messages.warning(request, "La API no devolvió partidos. Revisa tu Token.")
+            messages.warning(request, "La API respondió OK pero sin partidos.")
 
     except Exception as e:
-        messages.error(request, f"Error de conexión: {e}")
+        messages.error(request, f"Error: {e}")
+        return redirect('mis_torneos')
 
-    return redirect('mis_torneos') # Te devuelve a tu pantalla principal
+    # EN LUGAR DE REDIRIGIR, MOSTRAMOS EL REPORTE
+    return render(request, 'core/actualizar_resultados.html', {'reporte': reporte})
     
 @login_required
 def mis_torneos(request):
