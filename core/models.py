@@ -18,6 +18,7 @@ class Match(models.Model):
     home_team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name='home_matches', verbose_name="Local")
     away_team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name='away_matches', verbose_name="Visitante")
     date = models.DateTimeField(verbose_name="Fecha del partido")
+    status = models.CharField(max_length=20, default='SCHEDULED')
     
     # Goles reales (nulos hasta que se juegue)
     home_goals = models.IntegerField(null=True, blank=True, verbose_name="Goles Local")

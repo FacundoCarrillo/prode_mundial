@@ -139,7 +139,7 @@ def actualizar_partidos_web(request):
     
     # Rango de fechas
     hoy = timezone.now().date()
-    ayer = hoy - timedelta(days=4)
+    ayer = hoy - timedelta(days=5)
     manana = hoy + timedelta(days=5)
     
     params = {
@@ -382,3 +382,89 @@ def correr_migraciones_web(request):
         return HttpResponse("✅ ¡ÉXITO! Se agregó la columna 'points' y la base de datos está actualizada.")
     except Exception as e:
         return HttpResponse(f"❌ Error al migrar: {e}")
+    
+# --- AGREGAR AL FINAL DE core/views.py ---
+
+def cargar_fixture_inicial(request):
+    if not request.user.is_staff:
+        return HttpResponse("⛔ Acceso denegado.")
+
+    API_TOKEN = '1988cfde850245faaaceaf5d9ff33ada' 
+    COMPETITION_ID = '2021' 
+    
+    headers = {'X-Auth-Token': API_TOKEN}
+    url = f"https://api.football-data.org/v4/competitions/{COMPETITION_ID}/matches"
+
+    log_html = "<h1>📝 Reporte de Carga</h1><ul>"
+    actualizados = 0
+    nuevos = 0
+
+    try:
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        
+        if 'matches' in data:
+            for item in data['matches']:
+                # 1. Equipos (Igual que antes)
+                equipo_local, _ = Team.objects.get_or_create(
+                    name=item['homeTeam']['name'],
+                    defaults={'logo': item['homeTeam']['crest'], 'flag_code': item['homeTeam'].get('tla', 'XX')}
+                )
+                equipo_visitante, _ = Team.objects.get_or_create(
+                    name=item['awayTeam']['name'],
+                    defaults={'logo': item['awayTeam']['crest'], 'flag_code': item['awayTeam'].get('tla', 'XX')}
+                )
+
+                # 2. Datos del partido
+                fecha = item['utcDate']
+                estado = item['status']
+                gol_local = item['score']['fullTime']['home']
+                gol_visitante = item['score']['fullTime']['away']
+
+                # 3. BUSQUEDA MANUAL Y ACTUALIZACIÓN FORZADA
+                # Buscamos el partido por equipos (ignoramos fecha exacta por si cambió la hora)
+                partido = Match.objects.filter(
+                    home_team=equipo_local, 
+                    away_team=equipo_visitante
+                ).first()
+
+                if partido:
+                    # SI YA EXISTE: Lo actualizamos a la fuerza
+                    cambios = []
+                    if partido.status != estado:
+                        partido.status = estado
+                        cambios.append("Estado")
+                    
+                    if partido.home_goals != gol_local:
+                        partido.home_goals = gol_local
+                        partido.away_goals = gol_visitante
+                        cambios.append(f"Goles ({gol_local}-{gol_visitante})")
+                    
+                    if cambios:
+                        partido.save()
+                        actualizados += 1
+                        log_html += f"<li>✅ <b>{equipo_local} vs {equipo_visitante}</b>: Actualizado ({', '.join(cambios)})</li>"
+                    else:
+                        # Si no hubo cambios, no hacemos nada (pero sabemos que lo vimos)
+                        pass
+                else:
+                    # SI NO EXISTE: Lo creamos
+                    Match.objects.create(
+                        home_team=equipo_local,
+                        away_team=equipo_visitante,
+                        date=fecha,
+                        status=estado,
+                        home_goals=gol_local,
+                        away_goals=gol_visitante
+                    )
+                    nuevos += 1
+                    log_html += f"<li>🆕 <b>{equipo_local} vs {equipo_visitante}</b>: Creado Nuevo</li>"
+
+            log_html += f"</ul><h2>Resumen: {nuevos} Nuevos, {actualizados} Actualizados.</h2>"
+            return HttpResponse(log_html)
+        
+        else:
+            return HttpResponse(f"⚠️ La API respondió sin partidos. Data: {data}")
+
+    except Exception as e:
+        return HttpResponse(f"❌ Error: {e}")

@@ -1,4 +1,6 @@
-{% extends 'core/base.html' %} {% block content %}
+{% extends 'core/base.html' %} 
+
+{% block content %}
 
     <div class="text-center mb-10">
         <h1 class="text-4xl font-extrabold text-slate-900 tracking-tight">Próximos Partidos</h1>
@@ -15,79 +17,98 @@
                 </div>
 
                 <div class="p-6 flex-grow flex flex-col items-center justify-center">
+                    
                     <div class="flex items-center justify-between w-full mb-4">
+                        
                         <div class="flex flex-col items-center w-1/3">
                             <div class="w-16 h-16 flex items-center justify-center mb-2">
                                 {% if item.partido.home_team.logo %}
-                                <img src="{{ item.partido.home_team.logo }}" alt="{{ item.partido.home_team.name }}" class="w-full h-full object-contain filter drop-shadow-sm">
+                                    <img src="{{ item.partido.home_team.logo }}" alt="{{ item.partido.home_team.name }}" class="w-full h-full object-contain filter drop-shadow-sm">
                                 {% else %}
-                                 <div class="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center text-2xl shadow-sm">
-                                {{ item.partido.home_team.flag_code|default:"🏠" }}
-                                </div>
+                                    <div class="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center text-2xl shadow-sm">
+                                        {{ item.partido.home_team.flag_code|default:"🏠" }}
+                                    </div>
                                 {% endif %}
                             </div>
-                            <span class="font-bold text-slate-800 text-center leading-tight">{{ item.partido.home_team.name }}</span>
+                            <span class="font-bold text-slate-800 text-center leading-tight text-sm">{{ item.partido.home_team.name }}</span>
                         </div>
 
-                        <div class="w-1/3 text-center">
-                            {% if item.partido.home_goals is not None %}
+                        <div class="w-1/3 text-center flex flex-col items-center justify-center">
+                            {% if item.partido.status == 'FINISHED' %}
+                                <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Final</span>
                                 <div class="text-3xl font-black text-slate-900 tracking-tighter">
-                                    {{ item.partido.home_goals }}-{{ item.partido.away_goals }}
+                                    {{ item.partido.home_goals }} - {{ item.partido.away_goals }}
                                 </div>
-                                <span class="text-xs text-green-600 font-bold bg-green-100 px-2 py-1 rounded-full">FINAL</span>
                             {% else %}
-                                <div class="text-xl font-bold text-gray-300">VS</div>
+                                <div class="text-2xl font-bold text-gray-300 italic">VS</div>
+                                {% if item.partido.status != 'IN_PLAY' %}
+                                    <span class="text-xs text-blue-500 font-bold mt-1">{{ item.partido.date|date:"H:i" }} hs</span>
+                                {% endif %}
                             {% endif %}
                         </div>
 
                         <div class="flex flex-col items-center w-1/3">
-                                <div class="w-16 h-16 flex items-center justify-center mb-2">
-                                    {% if item.partido.away_team.logo %}
+                            <div class="w-16 h-16 flex items-center justify-center mb-2">
+                                {% if item.partido.away_team.logo %}
                                     <img src="{{ item.partido.away_team.logo }}" alt="{{ item.partido.away_team.name }}" class="w-full h-full object-contain filter drop-shadow-sm">
-                                    {% else %}
-                                <div class="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center text-2xl shadow-sm">
-                                    {{ item.partido.away_team.flag_code|default:"✈️" }}
-                                </div>
+                                {% else %}
+                                    <div class="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center text-2xl shadow-sm">
+                                        {{ item.partido.away_team.flag_code|default:"✈️" }}
+                                    </div>
                                 {% endif %}
-                                </div>
-                                <span class="font-bold text-slate-800 text-center leading-tight">{{ item.partido.away_team.name }}</span>
+                            </div>
+                            <span class="font-bold text-slate-800 text-center leading-tight text-sm">{{ item.partido.away_team.name }}</span>
                         </div>
                     </div>
 
                     <div class="w-full mt-4 pt-4 border-t border-dashed border-gray-200 text-center">
-                        {% if item.prediccion %}
-                            <div class="bg-blue-50 rounded-lg p-3">
-                                <p class="text-xs text-blue-600 font-bold uppercase mb-1">Tu Pronóstico</p>
-                                <p class="text-xl font-bold text-blue-900">
-                                    {{ item.prediccion.predicted_home }} - {{ item.prediccion.predicted_away }}
-                                </p>
-                                
-                                {% if item.partido.home_goals is not None %}
-                                    <div class="mt-2">
-                                        {% if item.prediccion.get_score == 3 %}
-                                            <span class="bg-yellow-400 text-yellow-900 text-xs font-bold px-2 py-1 rounded shadow-sm">🌟 ¡EXACTO! (+3)</span>
-                                        {% elif item.prediccion.get_score == 1 %}
-                                            <span class="bg-blue-200 text-blue-800 text-xs font-bold px-2 py-1 rounded">✔️ TENDENCIA (+1)</span>
+                        
+                        {% if item.partido.status == 'FINISHED' %}
+                            
+                            {% if item.prediccion %}
+                                <div class="bg-blue-50 border border-blue-100 rounded-lg p-2">
+                                    <p class="text-[10px] text-blue-500 font-bold uppercase mb-1">Tu Pronóstico</p>
+                                    <p class="text-xl font-bold text-blue-900 font-mono">
+                                        {{ item.prediccion.predicted_home }} - {{ item.prediccion.predicted_away }}
+                                    </p>
+                                    <div class="mt-1">
+                                        {% if item.prediccion.points == 3 %}
+                                            <span class="bg-yellow-400 text-yellow-900 text-[10px] font-bold px-2 py-0.5 rounded shadow-sm">🌟 ¡EXACTO! (+3)</span>
+                                        {% elif item.prediccion.points == 1 %}
+                                            <span class="bg-green-200 text-green-800 text-[10px] font-bold px-2 py-0.5 rounded">✔️ TENDENCIA (+1)</span>
                                         {% else %}
-                                            <span class="bg-gray-200 text-gray-600 text-xs font-bold px-2 py-1 rounded">❌ FALLO (+0)</span>
+                                            <span class="bg-gray-200 text-gray-500 text-[10px] font-bold px-2 py-0.5 rounded">❌ FALLO (+0)</span>
                                         {% endif %}
                                     </div>
-                                {% elif item.partido.home_goals is None %}
-                                     <a href="{% url 'predecir' item.partido.id %}" class="text-xs text-blue-500 hover:underline mt-2 block">
-                                        Cambiar
-                                     </a>
-                                {% endif %}
-                            </div>
+                                </div>
+                            {% else %}
+                                <div class="bg-red-50 border border-red-100 text-red-500 py-3 rounded-lg text-center font-bold text-sm">
+                                    ❌ ¡No jugaste!
+                                </div>
+                            {% endif %}
+
                         {% else %}
-                            {% if item.partido.home_goals is None %}
-                                <a href="{% url 'predecir' item.partido.id %}" class="block w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-4 rounded-lg transition shadow-md hover:shadow-lg transform hover:-translate-y-0.5">
-                                    ¡Jugar Ahora!
+
+                            {% if item.partido.status == 'IN_PLAY' or item.partido.status == 'PAUSED' %}
+                                <a href="{% url 'predecir' item.partido.id %}" class="block w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-md animate-pulse text-center">
+                                    ⚽ ¡EN VIVO! - Ver/Jugar
                                 </a>
                             {% else %}
-                                <span class="text-gray-400 text-sm italic">No participaste</span>
+                                {% if item.prediccion %}
+                                    <a href="{% url 'predecir' item.partido.id %}" class="block w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2 rounded-lg text-center border border-slate-300 transition text-sm">
+                                        ✏️ Modificar ({{ item.prediccion.predicted_home }}-{{ item.prediccion.predicted_away }})
+                                    </a>
+                                {% else %}
+                                    <a href="{% url 'predecir' item.partido.id %}" class="block w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-4 rounded-lg transition shadow-md hover:shadow-lg transform hover:-translate-y-0.5 text-center">
+                                        ¡Jugar Ahora!
+                                    </a>
+                                {% endif %}
                             {% endif %}
+
                         {% endif %}
+
                     </div>
+
                 </div>
             </div>
         {% empty %}
