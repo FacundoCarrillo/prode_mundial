@@ -157,6 +157,25 @@ else:
     print(f"❌ Error: {response.status_code}")
     print(response.text)
 ==================================================
+ARCHIVO: .\ver_ligas.py
+==================================================
+import requests
+
+api_token = '1988cfde850245faaaceaf5d9ff33ada' # Tu token
+uri = 'https://api.football-data.org/v4/competitions'
+headers = { 'X-Auth-Token': api_token }
+
+response = requests.get(uri, headers=headers)
+competitions = response.json().get('competitions', [])
+
+print(f"{'ID':<6} | {'NOMBRE':<30} | {'PLAN'}")
+print("-" * 50)
+
+for c in competitions:
+    # Solo mostramos las del plan gratuito (TIER_ONE) para que no te den error
+    if c.get('plan') == 'TIER_ONE': 
+        print(f"{c['id']:<6} | {c['name']:<30} | {c['plan']}")
+==================================================
 ARCHIVO: .\config\asgi.py
 ==================================================
 """
@@ -252,6 +271,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'core.context_processors.selector_competencias',
             ],
         },
     },
@@ -389,7 +409,7 @@ from core.views import home, predecir_partido # <--- Importamos la nueva vista
 from core.views import home, predecir_partido, ranking  # <--- Agregamos ranking
 from django.urls import path, include # <--- Agrega include aquí
 from core.views import home, predecir_partido, ranking, actualizar_partidos_web, mis_torneos, buscar_torneo, unirse_torneo, gestionar_torneo, responder_solicitud, eliminar_torneo # <--- Importala
-from core.views import correr_migraciones_web, cargar_fixture_inicial
+from core.views import correr_migraciones_web, cargar_fixture_inicial, cambiar_competencia, fixture, tabla_posiciones
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -414,7 +434,11 @@ urlpatterns = [
     path('torneo/<int:tournament_id>/eliminar/', eliminar_torneo, name='eliminar_torneo'),
     path('migrar-emergencia/', correr_migraciones_web),
     path('cargar-fixture-magico/', cargar_fixture_inicial),
+    path('cambiar-liga/<int:comp_id>/', cambiar_competencia, name='cambiar_competencia'),
+    path('fixture/', fixture, name='fixture'),
+    path('tabla/', tabla_posiciones, name='tabla'),
 ]
+
 
 ==================================================
 ARCHIVO: .\config\wsgi.py
@@ -444,26 +468,45 @@ ARCHIVO: .\config\__init__.py
 ARCHIVO: .\core\admin.py
 ==================================================
 from django.contrib import admin
-from .models import Team, Match, Prediction, Tournament, TournamentMember
+from .models import Team, Match, Prediction, Tournament, TournamentMember, Competition
 
-admin.site.register(Team)
-admin.site.register(Match)
-admin.site.register(Prediction)
-# Configuración para ver los miembros DENTRO de la pantalla del torneo
+# --- 1. NUEVA CONFIGURACIÓN PARA COMPETICIONES ---
+@admin.register(Competition)
+class CompetitionAdmin(admin.ModelAdmin):
+    list_display = ('name', 'type', 'api_id', 'slug')
+    list_filter = ('type',)
+    search_fields = ('name',)
+    # Esto hace que el slug se escriba solo mientras escribís el nombre
+    prepopulated_fields = {"slug": ("name",)} 
+
+# --- 2. CONFIGURACIÓN MEJORADA PARA PARTIDOS ---
+@admin.register(Match)
+class MatchAdmin(admin.ModelAdmin):
+    # Ahora mostramos la Competición y la Ronda en la lista
+    list_display = ('__str__', 'competition', 'round_name', 'date', 'status')
+    list_filter = ('competition', 'status', 'date') # Filtros laterales muy útiles
+    search_fields = ('home_team__name', 'away_team__name')
+
+# --- 3. CONFIGURACIÓN MEJORADA PARA TORNEOS ---
 class MemberInline(admin.TabularInline):
     model = TournamentMember
     extra = 1
 
 @admin.register(Tournament)
 class TournamentAdmin(admin.ModelAdmin):
-    list_display = ('name', 'code', 'creator', 'created_at')
+    list_display = ('name', 'code', 'competition', 'creator', 'created_at')
+    list_filter = ('competition',) # Filtro lateral para ver torneos por liga
     search_fields = ('name', 'code')
-    inlines = [MemberInline] # Esto permite agregar gente desde el torneo
+    inlines = [MemberInline]
+
+# --- 4. RESTO DE MODELOS (Sin cambios mayores) ---
+admin.site.register(Team)
+admin.site.register(Prediction)
 
 @admin.register(TournamentMember)
 class TournamentMemberAdmin(admin.ModelAdmin):
     list_display = ('user', 'tournament', 'status', 'points')
-    list_filter = ('status', 'tournament')
+    list_filter = ('status', 'tournament__competition') # Filtramos por la liga del torneo
 ==================================================
 ARCHIVO: .\core\apps.py
 ==================================================
@@ -475,25 +518,54 @@ class CoreConfig(AppConfig):
     name = 'core'
 
 ==================================================
+ARCHIVO: .\core\context_processors.py
+==================================================
+from .models import Competition
+
+def selector_competencias(request):
+    # 1. Obtenemos todas las ligas para el menú desplegable
+    todas_comps = Competition.objects.all()
+    
+    # 2. Buscamos cuál está seleccionada en la sesión
+    comp_id = request.session.get('competencia_id')
+    
+    competencia_activa = None
+    if comp_id:
+        competencia_activa = Competition.objects.filter(id=comp_id).first()
+    
+    # Si no hay ninguna seleccionada (primera vez), elegimos la primera por defecto
+    if not competencia_activa and todas_comps.exists():
+        competencia_activa = todas_comps.first()
+        # La guardamos en sesión para la próxima
+        request.session['competencia_id'] = competencia_activa.id
+
+    return {
+        'lista_competencias': todas_comps,
+        'competencia_activa': competencia_activa
+    }
+==================================================
 ARCHIVO: .\core\forms.py
 ==================================================
 from django import forms
-from .models import Prediction, Tournament
+from .models import Prediction, Tournament, Match
 
 class PredictionForm(forms.ModelForm):
     class Meta:
         model = Prediction
         fields = ['predicted_home', 'predicted_away']
-        # Esto es solo estética para que se vea mejor
         widgets = {
             'predicted_home': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Local'}),
             'predicted_away': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Visitante'}),
         }
-# --- EL NUEVO FORMULARIO PARA CREAR TORNEOS (AGREGAR ESTO) ---
+
 class TournamentForm(forms.ModelForm):
+    # Agregamos los campos para elegir inicio y fin (ChoiceField crea un dropdown)
+    start_round = forms.ChoiceField(required=False, label="Desde la fecha")
+    end_round = forms.ChoiceField(required=False, label="Hasta la fecha")
+
     class Meta:
         model = Tournament
-        fields = ['name', 'image'] # El usuario solo elige nombre e imagen
+        fields = ['name', 'image', 'start_round', 'end_round']
         widgets = {
             'name': forms.TextInput(attrs={
                 'class': 'w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-400',
@@ -504,61 +576,107 @@ class TournamentForm(forms.ModelForm):
                 'placeholder': 'https://... (Opcional)'
             })
         }
+
+    def __init__(self, *args, **kwargs):
+        # Extraemos la competición que pasaremos desde la vista
+        competition = kwargs.pop('competition', None)
+        super().__init__(*args, **kwargs)
+
+        if competition:
+            # Buscamos todas las rondas ÚNICAS de esa liga
+            rondas = Match.objects.filter(competition=competition).values_list('round_name', flat=True).distinct().order_by('date')
+            
+            # Las convertimos en opciones para el select [(valor, texto), ...]
+            # Usamos un set para evitar duplicados si las fechas no están perfectamente ordenadas en DB,
+            # pero lo ideal es ordenarlas. Por simplicidad ahora:
+            opciones = [('', 'Torneo Completo (Todas las fechas)')] + [(r, r) for r in rondas]
+            
+            self.fields['start_round'].choices = opciones
+            self.fields['end_round'].choices = opciones
+            
+            # Estilos CSS para los select
+            style = 'w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-400 bg-white'
+            self.fields['start_round'].widget.attrs['class'] = style
+            self.fields['end_round'].widget.attrs['class'] = style
 ==================================================
 ARCHIVO: .\core\models.py
 ==================================================
 from django.db import models
 from django.contrib.auth.models import User
-import uuid # <--- Agrega esto arriba de todo
 import random
 import string
 
-# Modelo para los Equipos (Ej: Argentina, Brasil)
-class Team(models.Model):
-    name = models.CharField(max_length=50, verbose_name="Nombre")
-    flag_code = models.CharField(max_length=5, verbose_name="Código Bandera") # Ej: "ar", "br"
-    # Agregamos este campo nuevo. Usamos URLField porque guardamos el link, no el archivo.
-    logo = models.URLField(null=True, blank=True, verbose_name="Escudo URL")
+# --- 1. NUEVA ENTIDAD: COMPETICIÓN (La base de la nueva arquitectura) ---
+class Competition(models.Model):
+    name = models.CharField(max_length=100, verbose_name="Nombre Liga/Copa") # Ej: Premier League
+    slug = models.SlugField(unique=True, verbose_name="Identificador URL") # Ej: premier-league
+    api_id = models.IntegerField(unique=True, verbose_name="ID en API Football") # Ej: 2021
+    
+    # Esto define si mostramos Tabla de Posiciones (Liga) o Grupos/Llaves (Copa)
+    TYPE_CHOICES = [
+        ('LEAGUE', 'Liga'), 
+        ('CUP', 'Copa'),    
+    ]
+    type = models.CharField(max_length=10, choices=TYPE_CHOICES, default='LEAGUE')
+
     def __str__(self):
         return self.name
 
-# Modelo para los Partidos
+# --- 2. EQUIPOS (Sin cambios, solo mantenemos tu estructura) ---
+class Team(models.Model):
+    name = models.CharField(max_length=50, verbose_name="Nombre")
+    flag_code = models.CharField(max_length=5, verbose_name="Código Bandera") # Ej: "ar", "br"
+    logo = models.URLField(null=True, blank=True, verbose_name="Escudo URL")
+    
+    def __str__(self):
+        return self.name
+
+# --- 3. PARTIDOS (Ahora con Competición y Ronda) ---
 class Match(models.Model):
+    # Relación nueva: Cada partido pertenece a una Liga/Copa específica
+    competition = models.ForeignKey(Competition, on_delete=models.CASCADE, related_name='matches', verbose_name="Competición")
+    
     home_team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name='home_matches', verbose_name="Local")
     away_team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name='away_matches', verbose_name="Visitante")
+    
     date = models.DateTimeField(verbose_name="Fecha del partido")
     status = models.CharField(max_length=20, default='SCHEDULED')
     
-    # Goles reales (nulos hasta que se juegue)
+    # --- CAMPO NUEVO PARA TU FILTRO DE FECHAS ---
+    # Aquí guardaremos "Regular Season - 1", "Group A - 3", "Quarter-finals", etc.
+    round_name = models.CharField(max_length=50, verbose_name="Ronda / Fecha") 
+    
+    # Goles reales
     home_goals = models.IntegerField(null=True, blank=True, verbose_name="Goles Local")
     away_goals = models.IntegerField(null=True, blank=True, verbose_name="Goles Visitante")
     
-    def __str__(self):
-        return f"{self.home_team} vs {self.away_team}"
+    class Meta:
+        verbose_name = "Partido"
+        verbose_name_plural = "Partidos"
 
-# Modelo para las Predicciones de los usuarios
+    def __str__(self):
+        return f"[{self.competition.name}] {self.home_team} vs {self.away_team} ({self.round_name})"
+
+# --- 4. PREDICCIONES (Tu lógica original intacta) ---
 class Prediction(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE) # Relación con el usuario de Django
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
     match = models.ForeignKey(Match, on_delete=models.CASCADE)
     
     predicted_home = models.IntegerField(verbose_name="Predicción Local")
     predicted_away = models.IntegerField(verbose_name="Predicción Visitante")
-    # --- AGREGA ESTA LÍNEA NUEVA ---
     points = models.IntegerField(default=0) 
-    # -------------------------------
     
     def __str__(self):
         return f"{self.user.username}: {self.predicted_home}-{self.predicted_away}"
+
     def get_score(self):
         """
         Calcula los puntos ganados comparando con el resultado real del partido.
         Retorna: 3 (Exacto), 1 (Tendencia), 0 (Nada) o None (Si no se jugó).
         """
-        # Si el partido no tiene resultado cargado aún, no hay puntos
         if self.match.home_goals is None or self.match.away_goals is None:
             return None
 
-        # Alias para escribir menos
         ph = self.predicted_home
         pa = self.predicted_away
         rh = self.match.home_goals
@@ -569,11 +687,8 @@ class Prediction(models.Model):
             return 3
 
         # 2. Tendencia (1 Punto)
-        # Gana Local (Ambos predicen local > visitante)
         gana_local = (ph > pa) and (rh > ra)
-        # Gana Visitante (Ambos predicen local < visitante)
         gana_visitante = (ph < pa) and (rh < ra)
-        # Empate (Ambos predicen empate, pero no fue exacto porque ya pasó el if de arriba)
         empate = (ph == pa) and (rh == ra)
 
         if gana_local or gana_visitante or empate:
@@ -581,26 +696,34 @@ class Prediction(models.Model):
         
         # 3. Nada
         return 0
+
+# --- 5. TORNEOS (Actualizado con Competición y Rango de Fechas) ---
 class Tournament(models.Model):
     name = models.CharField(max_length=100, verbose_name="Nombre del Torneo")
-    # Generamos un código único corto (Ej: "A7X9") para compartir
     code = models.CharField(max_length=6, unique=True, verbose_name="Código de Invitación")
     creator = models.ForeignKey(User, on_delete=models.CASCADE, related_name="created_tournaments")
     image = models.URLField(blank=True, null=True, verbose_name="Imagen (URL)")
     created_at = models.DateTimeField(auto_now_add=True)
 
-    # Relación con usuarios a través de la tabla intermedia
+    # --- NUEVOS FILTROS MAESTROS ---
+    # Un torneo pertenece obligatoriamente a UNA competición (Premier, Champions, etc.)
+    competition = models.ForeignKey(Competition, on_delete=models.CASCADE, verbose_name="Liga/Copa Base")
+    
+    # Rango de fechas (Opcional: Si se dejan vacíos, incluye todo el torneo)
+    start_round = models.CharField(max_length=50, null=True, blank=True, verbose_name="Desde la Ronda")
+    end_round = models.CharField(max_length=50, null=True, blank=True, verbose_name="Hasta la Ronda")
+
     members = models.ManyToManyField(User, through='TournamentMember', related_name="tournaments")
 
     def save(self, *args, **kwargs):
-        # Si no tiene código, generamos uno aleatorio de 6 letras/números
         if not self.code:
             self.code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return self.name
+        return f"{self.name} ({self.competition.name})"
 
+# --- 6. MIEMBROS (Sin cambios) ---
 class TournamentMember(models.Model):
     STATUS_CHOICES = [
         ('PENDING', 'Pendiente de Aprobación'),
@@ -617,14 +740,12 @@ class TournamentMember(models.Model):
     points = models.IntegerField(default=0) 
 
     class Meta:
-        # Evita que un usuario se una dos veces al mismo torneo
         unique_together = ('tournament', 'user')
         verbose_name = "Miembro de Torneo"
         verbose_name_plural = "Miembros de Torneo"
 
     def __str__(self):
         return f"{self.user.username} en {self.tournament.name} ({self.status})"
-
 ==================================================
 ARCHIVO: .\core\tests.py
 ==================================================
@@ -636,7 +757,7 @@ from django.test import TestCase
 ARCHIVO: .\core\views.py
 ==================================================
 from django.shortcuts import render, redirect, get_object_or_404
-from .models import Match, Prediction, Team, Tournament, TournamentMember
+from .models import Match, Prediction, Team, Tournament, TournamentMember, Competition
 from .forms import PredictionForm
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
@@ -651,6 +772,8 @@ from django.contrib import messages
 from django.db.models import Sum
 import requests
 from datetime import timedelta
+from itertools import groupby
+from operator import attrgetter
 
 def home(request):
     # 1. Traemos todos los partidos
@@ -868,34 +991,44 @@ def actualizar_partidos_web(request):
     
 @login_required
 def mis_torneos(request):
-    # 1. Torneos donde estoy jugando (ACEPTADO)
+    # 1. Recuperamos la liga activa de la sesión (o una por defecto)
+    comp_id = request.session.get('competencia_id')
+    
+    # IMPORTANTE: Si es la primera vez y no hay nada en sesión, tomamos la primera liga que exista
+    if not comp_id:
+        primera = Competition.objects.first()
+        if primera:
+            comp_id = primera.id
+            request.session['competencia_id'] = comp_id
+            
+    competencia_activa = get_object_or_404(Competition, id=comp_id)
+
+    # 2. Filtramos SOLO los torneos de esta liga
     jugando = TournamentMember.objects.filter(
         user=request.user, 
-        status='ACCEPTED'
+        status='ACCEPTED',
+        tournament__competition=competencia_activa # <--- FILTRO MAGICO
     ).select_related('tournament')
 
-    # 2. Torneos donde espero aprobación (PENDIENTE)
     pendientes = TournamentMember.objects.filter(
         user=request.user, 
-        status='PENDING'
+        status='PENDING',
+        tournament__competition=competencia_activa # <--- FILTRO MAGICO
     ).select_related('tournament')
 
     if request.method == 'POST':
-        # --- NUEVA VALIDACIÓN: LÍMITE DE 3 TORNEOS ---
-        cantidad_creados = Tournament.objects.filter(creator=request.user).count()
+        cantidad_creados = Tournament.objects.filter(creator=request.user, competition=competencia_activa).count()
         
+        # Pasamos la competencia al formulario para que llene los dropdowns
+        form = TournamentForm(request.POST, competition=competencia_activa) 
+
         if cantidad_creados >= 3:
-            messages.error(request, "🚫 Límite alcanzado: Solo puedes administrar hasta 3 torneos a la vez.")
-            # --- CORRECCIÓN AQUÍ: ---
-            # Definimos el form aunque haya error, para que no falle el render de abajo.
-            form = TournamentForm(request.POST) 
-        # ---------------------------------------------
+            messages.error(request, "🚫 Límite alcanzado: Solo 3 torneos por liga.")
         else:
-            # Si no llegó al límite, procesamos el formulario normalmente
-            form = TournamentForm(request.POST)
             if form.is_valid():
                 torneo = form.save(commit=False)
                 torneo.creator = request.user
+                torneo.competition = competencia_activa # <--- ASIGNAMOS LA LIGA AUTOMÁTICAMENTE
                 torneo.save()
                 
                 TournamentMember.objects.create(
@@ -903,15 +1036,17 @@ def mis_torneos(request):
                     tournament=torneo, 
                     status='ACCEPTED'
                 )
-                messages.success(request, f'¡Torneo "{torneo.name}" creado!')
+                messages.success(request, f'¡Torneo "{torneo.name}" creado en {competencia_activa.name}!')
                 return redirect('mis_torneos')
     else:
-        form = TournamentForm()
+        # Pasamos la competencia al formulario vacío también
+        form = TournamentForm(competition=competencia_activa)
 
     return render(request, 'core/mis_torneos.html', {
         'jugando': jugando,
         'pendientes': pendientes,
-        'form': form
+        'form': form,
+        'competencia': competencia_activa
     })
 
 @login_required
@@ -1105,7 +1240,82 @@ def cargar_fixture_inicial(request):
 
     except Exception as e:
         return HttpResponse(f"❌ Error: {e}")
+    
+def cambiar_competencia(request, comp_id):
+    # Guardamos la elección en la "memoria" del navegador (Sesión)
+    request.session['competencia_id'] = comp_id
+    
+    # Redirigimos al usuario a la misma página donde estaba (o al home si falla)
+    return redirect(request.META.get('HTTP_REFERER', 'home'))
 
+# En core/views.py
+
+def fixture(request):
+    return render(request, 'core/home.html') # Por ahora reusamos home
+
+def tabla_posiciones(request):
+    return render(request, 'core/home.html') # Por ahora reusamos home
+
+def home(request):
+    # 1. Obtener Competencia Activa
+    comp_id = request.session.get('competencia_id')
+    if not comp_id:
+        # Fallback si no hay sesión
+        first_comp = Competition.objects.first()
+        if first_comp:
+            comp_id = first_comp.id
+            request.session['competencia_id'] = comp_id
+    
+    # 2. Filtrar partidos SOLO de esa competencia
+    if comp_id:
+        # Ordenamos por fecha para que el groupby funcione bien y para mostrar ordenado
+        partidos = Match.objects.filter(competition_id=comp_id).order_by('date')
+    else:
+        partidos = Match.objects.none()
+
+    # 3. Predicciones del usuario
+    predicciones_dict = {}
+    if request.user.is_authenticated:
+        predicciones = Prediction.objects.filter(user=request.user)
+        predicciones_dict = {p.match.id: p for p in predicciones}
+
+    # 4. Agrupar por Ronda (Fecha 1, Fecha 2...)
+    # Usamos una lista de diccionarios para mandarlo fácil al template
+    fixture_agrupado = []
+    
+    # groupby necesita que la lista esté ordenada por la clave de agrupación, 
+    # pero ya ordenamos por fecha, asumimos que las rondas siguen un orden temporal.
+    # Si las rondas están desordenadas (ej: Fecha 2 antes que Fecha 1 en tiempo), mejor agrupar por nombre.
+    
+    # Truco: Ordenamos por 'round_name' para agrupar, o confiamos en 'date'. 
+    # Vamos a confiar en 'date' para el orden visual, pero agruparemos manualmente para asegurar.
+    
+    grupos_temp = {} # { "Fecha 1": [match1, match2], "Fecha 2": ... }
+    
+    for partido in partidos:
+        ronda = partido.round_name
+        if ronda not in grupos_temp:
+            grupos_temp[ronda] = []
+        
+        # Empaquetamos partido + prediccion
+        item = {
+            'partido': partido,
+            'prediccion': predicciones_dict.get(partido.id)
+        }
+        grupos_temp[ronda].append(item)
+
+    # Convertimos a lista para el template
+    for nombre_ronda, items in grupos_temp.items():
+        fixture_agrupado.append({
+            'nombre': nombre_ronda,
+            'partidos': items,
+            'fecha_ref': items[0]['partido'].date # Para ordenar los grupos por fecha del primer partido
+        })
+    
+    # Ordenamos los grupos cronológicamente
+    fixture_agrupado.sort(key=lambda x: x['fecha_ref'])
+
+    return render(request, 'core/home.html', {'fixture_agrupado': fixture_agrupado})
 ==================================================
 ARCHIVO: .\core\__init__.py
 ==================================================
@@ -1114,108 +1324,129 @@ ARCHIVO: .\core\__init__.py
 ARCHIVO: .\core\management\commands\actualizar_partidos.py
 ==================================================
 from django.core.management.base import BaseCommand
-from core.models import Match
+from core.models import Match, Competition, Team
 import requests
 from django.utils import timezone
 from datetime import timedelta
 
 class Command(BaseCommand):
-    help = 'Actualiza partidos usando football-data.org'
+    help = 'Actualiza partidos respetando la Competición y la Ronda'
 
     def handle(self, *args, **kwargs):
         self.stdout.write("📡 Conectando a Football-Data.org...")
 
-        # --- TU NUEVA CLAVE AQUÍ ---
-        # Reemplaza esto con la clave que te llegó al mail
+        # --- TU TOKEN (Tomado de tu archivo original) ---
         API_TOKEN = '1988cfde850245faaaceaf5d9ff33ada' 
-        # ---------------------------
+        headers = {'X-Auth-Token': API_TOKEN}
+        base_url = "https://api.football-data.org/v4/competitions"
 
-        base_url = "https://api.football-data.org/v4/matches"
-        headers = {
-            'X-Auth-Token': API_TOKEN
-        }
+        # 1. Iteramos solo sobre las competiciones que cargaste en la DB
+        competiciones_activas = Competition.objects.all()
 
-        # Calculamos rango: Desde Ayer hasta Mañana
-        hoy = timezone.now().date()
-        ayer = hoy - timedelta(days=4)
-        manana = hoy + timedelta(days=5)
+        if not competiciones_activas:
+            self.stdout.write(self.style.ERROR("❌ No hay competiciones cargadas en la base de datos. Creálas en el Admin primero."))
+            return
 
-        # En esta API podemos pedir todo junto en una sola llamada
-        params = {
-            'dateFrom': ayer.strftime('%Y-%m-%d'),
-            'dateTo': manana.strftime('%Y-%m-%d')
-        }
-
-        try:
-            response = requests.get(base_url, headers=headers, params=params)
-            data = response.json()
-
-            # Diagnóstico de errores
-            if 'errorCode' in data:
-                self.stdout.write(self.style.WARNING(f"⚠️ Error API: {data.get('message')}"))
-                return
-
-            partidos_api = data.get('matches', [])
-            self.stdout.write(f"✅ Conexión exitosa. Encontrados: {len(partidos_api)} partidos en el rango.")
-
-            count_actualizados = 0
-
-            for item in partidos_api:
-                # 1. Datos API (La estructura cambia en esta API)
-                nombre_local_api = item['homeTeam']['name']
-                nombre_visitante_api = item['awayTeam']['name']
-                
-                # MODO ESPÍA ACTIVADO
-                estado = item['status'] # SCHEDULED, TIMED, FINISHED, IN_PLAY
-                self.stdout.write(f"👀 API ve: {nombre_local_api} vs {nombre_visitante_api} ({estado})")
-
-                # Goles (FullTime)
-                goles_local = item['score']['fullTime']['home']
-                goles_visitante = item['score']['fullTime']['away']
-                
-                # Logos (Crest)
-                logo_local = item['homeTeam'].get('crest')
-                logo_visitante = item['awayTeam'].get('crest')
-
-                # 2. Buscar en DB
-                # Nota: Esta API usa nombres en inglés (Spain vs Brazil)
-                partido_db = Match.objects.filter(
-                    home_team__name__icontains=nombre_local_api,
-                    away_team__name__icontains=nombre_visitante_api
-                ).first()
-
-                if partido_db:
-                    cambios = False
-
-                    # A. Actualizar Goles (Solo si el partido terminó o está en juego)
-                    if goles_local is not None and goles_visitante is not None:
-                        if partido_db.home_goals != goles_local or partido_db.away_goals != goles_visitante:
-                            partido_db.home_goals = goles_local
-                            partido_db.away_goals = goles_visitante
-                            cambios = True
-
-                    # B. Actualizar Logos
-                    if logo_local and partido_db.home_team.logo != logo_local:
-                        partido_db.home_team.logo = logo_local
-                        partido_db.home_team.save()
-                        self.stdout.write(f"      🛡️ Logo actualizado: {nombre_local_api}")
-
-                    if logo_visitante and partido_db.away_team.logo != logo_visitante:
-                        partido_db.away_team.logo = logo_visitante
-                        partido_db.away_team.save()
-                        self.stdout.write(f"      🛡️ Logo actualizado: {nombre_visitante_api}")
-
-                    # Guardar cambios
-                    if cambios:
-                        partido_db.save()
-                        self.stdout.write(self.style.SUCCESS(f"      ✅ Goles actualizados: {nombre_local_api} {goles_local}-{goles_visitante}"))
-                        count_actualizados += 1
+        for comp in competiciones_activas:
+            self.stdout.write(f"\n🏆 Procesando: {comp.name} (ID API: {comp.api_id})...")
             
-            if count_actualizados == 0:
-                self.stdout.write("ℹ️ No se actualizaron partidos (probablemente por diferencias de nombres).")
+            # Pedimos los partidos de ESTA competición
+            # Traemos partidos recientes y futuros cercanos (Rango amplio para fixture)
+            hoy = timezone.now().date()
+            desde = hoy - timedelta(days=5) 
+            hasta = hoy + timedelta(days=15)
+            
+            url = f"{base_url}/{comp.api_id}/matches"
+            params = {
+                'dateFrom': desde.strftime('%Y-%m-%d'),
+                'dateTo': hasta.strftime('%Y-%m-%d')
+            }
 
-        except Exception as e:
-            self.stdout.write(self.style.ERROR(f"❌ Error crítico: {e}"))
+            try:
+                response = requests.get(url, headers=headers, params=params)
+                data = response.json()
+
+                if 'errorCode' in data:
+                    self.stdout.write(self.style.WARNING(f"   ⚠️ Error API: {data.get('message')}"))
+                    continue
+
+                partidos_api = data.get('matches', [])
+                self.stdout.write(f"   ✅ Encontrados: {len(partidos_api)} partidos.")
+
+                for item in partidos_api:
+                    # --- A. PROCESAR EQUIPOS ---
+                    # Usamos get_or_create para no duplicar
+                    local, _ = Team.objects.get_or_create(
+                        name=item['homeTeam']['name'],
+                        defaults={
+                            'logo': item['homeTeam'].get('crest'),
+                            'flag_code': item['homeTeam'].get('tla', 'XX')
+                        }
+                    )
+                    visitante, _ = Team.objects.get_or_create(
+                        name=item['awayTeam']['name'],
+                        defaults={
+                            'logo': item['awayTeam'].get('crest'),
+                            'flag_code': item['awayTeam'].get('tla', 'XX')
+                        }
+                    )
+
+                    # --- B. DETECTAR RONDA (Vital para tu lista plegable) ---
+                    # La API devuelve 'matchday' (ej: 10) o 'stage' (ej: GROUP_STAGE)
+                    ronda = item.get('matchday')
+                    stage = item.get('stage')
+                    
+                    if ronda:
+                        nombre_ronda = f"Fecha {ronda}"
+                    else:
+                        # Limpiamos el nombre feo de la API (Ej: REGULAR_SEASON -> Regular Season)
+                        nombre_ronda = stage.replace('_', ' ').title() if stage else "General"
+
+                    # --- C. DATOS DEL PARTIDO ---
+                    fecha_str = item['utcDate']
+                    estado = item['status']
+                    goles_local = item['score']['fullTime']['home']
+                    goles_visitante = item['score']['fullTime']['away']
+
+                    # --- D. BUSCAR O CREAR PARTIDO ---
+                    # Ahora filtramos TAMBIÉN por competición para evitar cruces
+                    match_obj, created = Match.objects.get_or_create(
+                        competition=comp,
+                        home_team=local,
+                        away_team=visitante,
+                        defaults={
+                            'date': fecha_str,
+                            'status': estado,
+                            'round_name': nombre_ronda, # <--- Guardamos la ronda aquí
+                            'home_goals': goles_local,
+                            'away_goals': goles_visitante
+                        }
+                    )
+
+                    if not created:
+                        # Si ya existe, actualizamos datos clave
+                        cambios = False
+                        if match_obj.status != estado:
+                            match_obj.status = estado
+                            cambios = True
+                        if match_obj.home_goals != goles_local:
+                            match_obj.home_goals = goles_local
+                            match_obj.away_goals = goles_visitante
+                            cambios = True
+                        if match_obj.date != item['utcDate']: # Por si cambió el horario
+                            # Ojo: comparar strings de fecha puede ser truculento, pero sirve para cambios grandes
+                            pass 
+                        
+                        if cambios:
+                            match_obj.save()
+                            self.stdout.write(f"      🔄 Actualizado: {local} vs {visitante}")
+                    else:
+                        self.stdout.write(self.style.SUCCESS(f"      ✨ Nuevo: {local} vs {visitante} ({nombre_ronda})"))
+
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f"   ❌ Error conectando: {e}"))
+
+        self.stdout.write(self.style.SUCCESS("\n✅ Proceso de carga finalizado."))
 ==================================================
 ARCHIVO: .\core\management\commands\actualizar_partidos_apisports.py
 ==================================================
@@ -1331,7 +1562,7 @@ class Command(BaseCommand):
 ==================================================
 ARCHIVO: .\core\migrations\0001_initial.py
 ==================================================
-# Generated by Django 5.2.9 on 2025-12-13 20:50
+# Generated by Django 5.2.9 on 2025-12-20 01:01
 
 import django.db.models.deletion
 from django.conf import settings
@@ -1348,12 +1579,13 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.CreateModel(
-            name='Match',
+            name='Competition',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('date', models.DateTimeField(verbose_name='Fecha del partido')),
-                ('home_goals', models.IntegerField(blank=True, null=True, verbose_name='Goles Local')),
-                ('away_goals', models.IntegerField(blank=True, null=True, verbose_name='Goles Visitante')),
+                ('name', models.CharField(max_length=100, verbose_name='Nombre Liga/Copa')),
+                ('slug', models.SlugField(unique=True, verbose_name='Identificador URL')),
+                ('api_id', models.IntegerField(unique=True, verbose_name='ID en API Football')),
+                ('type', models.CharField(choices=[('LEAGUE', 'Liga'), ('CUP', 'Copa')], default='LEAGUE', max_length=10)),
             ],
         ),
         migrations.CreateModel(
@@ -1362,7 +1594,26 @@ class Migration(migrations.Migration):
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('name', models.CharField(max_length=50, verbose_name='Nombre')),
                 ('flag_code', models.CharField(max_length=5, verbose_name='Código Bandera')),
+                ('logo', models.URLField(blank=True, null=True, verbose_name='Escudo URL')),
             ],
+        ),
+        migrations.CreateModel(
+            name='Match',
+            fields=[
+                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('date', models.DateTimeField(verbose_name='Fecha del partido')),
+                ('status', models.CharField(default='SCHEDULED', max_length=20)),
+                ('round_name', models.CharField(max_length=50, verbose_name='Ronda / Fecha')),
+                ('home_goals', models.IntegerField(blank=True, null=True, verbose_name='Goles Local')),
+                ('away_goals', models.IntegerField(blank=True, null=True, verbose_name='Goles Visitante')),
+                ('competition', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='matches', to='core.competition', verbose_name='Competición')),
+                ('away_team', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='away_matches', to='core.team', verbose_name='Visitante')),
+                ('home_team', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='home_matches', to='core.team', verbose_name='Local')),
+            ],
+            options={
+                'verbose_name': 'Partido',
+                'verbose_name_plural': 'Partidos',
+            },
         ),
         migrations.CreateModel(
             name='Prediction',
@@ -1370,62 +1621,11 @@ class Migration(migrations.Migration):
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('predicted_home', models.IntegerField(verbose_name='Predicción Local')),
                 ('predicted_away', models.IntegerField(verbose_name='Predicción Visitante')),
+                ('points', models.IntegerField(default=0)),
                 ('match', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='core.match')),
                 ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to=settings.AUTH_USER_MODEL)),
             ],
         ),
-        migrations.AddField(
-            model_name='match',
-            name='away_team',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='away_matches', to='core.team', verbose_name='Visitante'),
-        ),
-        migrations.AddField(
-            model_name='match',
-            name='home_team',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='home_matches', to='core.team', verbose_name='Local'),
-        ),
-    ]
-
-==================================================
-ARCHIVO: .\core\migrations\0002_team_logo.py
-==================================================
-# Generated by Django 5.2.9 on 2025-12-16 00:01
-
-from django.db import migrations, models
-
-
-class Migration(migrations.Migration):
-
-    dependencies = [
-        ('core', '0001_initial'),
-    ]
-
-    operations = [
-        migrations.AddField(
-            model_name='team',
-            name='logo',
-            field=models.URLField(blank=True, null=True, verbose_name='Escudo URL'),
-        ),
-    ]
-
-==================================================
-ARCHIVO: .\core\migrations\0003_tournament_tournamentmember_tournament_members.py
-==================================================
-# Generated by Django 5.2.9 on 2025-12-17 16:31
-
-import django.db.models.deletion
-from django.conf import settings
-from django.db import migrations, models
-
-
-class Migration(migrations.Migration):
-
-    dependencies = [
-        ('core', '0002_team_logo'),
-        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-    ]
-
-    operations = [
         migrations.CreateModel(
             name='Tournament',
             fields=[
@@ -1434,6 +1634,9 @@ class Migration(migrations.Migration):
                 ('code', models.CharField(max_length=6, unique=True, verbose_name='Código de Invitación')),
                 ('image', models.URLField(blank=True, null=True, verbose_name='Imagen (URL)')),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('start_round', models.CharField(blank=True, max_length=50, null=True, verbose_name='Desde la Ronda')),
+                ('end_round', models.CharField(blank=True, max_length=50, null=True, verbose_name='Hasta la Ronda')),
+                ('competition', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='core.competition', verbose_name='Liga/Copa Base')),
                 ('creator', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='created_tournaments', to=settings.AUTH_USER_MODEL)),
             ],
         ),
@@ -1457,50 +1660,6 @@ class Migration(migrations.Migration):
             model_name='tournament',
             name='members',
             field=models.ManyToManyField(related_name='tournaments', through='core.TournamentMember', to=settings.AUTH_USER_MODEL),
-        ),
-    ]
-
-==================================================
-ARCHIVO: .\core\migrations\0004_prediction_points.py
-==================================================
-# Generated by Django 5.2.9 on 2025-12-19 21:48
-
-from django.db import migrations, models
-
-
-class Migration(migrations.Migration):
-
-    dependencies = [
-        ('core', '0003_tournament_tournamentmember_tournament_members'),
-    ]
-
-    operations = [
-        migrations.AddField(
-            model_name='prediction',
-            name='points',
-            field=models.IntegerField(default=0),
-        ),
-    ]
-
-==================================================
-ARCHIVO: .\core\migrations\0005_match_status.py
-==================================================
-# Generated by Django 5.2.9 on 2025-12-19 22:00
-
-from django.db import migrations, models
-
-
-class Migration(migrations.Migration):
-
-    dependencies = [
-        ('core', '0004_prediction_points'),
-    ]
-
-    operations = [
-        migrations.AddField(
-            model_name='match',
-            name='status',
-            field=models.CharField(default='SCHEDULED', max_length=20),
         ),
     ]
 
@@ -1740,87 +1899,150 @@ ARCHIVO: .\core\templates\core\base.html
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Prode Mundial 2026</title>
+    <title>Prode Mundial - {{ competencia_activa.name|default:"General" }}</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        /* Ocultar scrollbar pero permitir scroll */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="flex flex-col min-h-screen">
 
-    <nav class="bg-slate-900 text-white shadow-lg">
+    <nav class="bg-slate-900 text-white shadow-lg z-50 relative">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16">
-                <div class="flex items-center">
+                
+                <div class="flex items-center space-x-6">
                     <a href="{% url 'home' %}" class="flex items-center space-x-2 text-xl font-bold text-yellow-400 hover:text-yellow-300">
                         <span>⚽</span>
-                        <span>PRODE MUNDIAL</span>
+                        <span class="hidden md:inline">PRODE</span>
                     </a>
+
+                    <div x-data="{ open: false }" class="relative">
+                        <button @click="open = !open" @click.outside="open = false" class="flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-full transition border border-slate-700">
+                            {% if competencia_activa %}
+                                <span class="font-bold text-sm uppercase tracking-wide">{{ competencia_activa.name }}</span>
+                            {% else %}
+                                <span class="font-bold text-sm text-red-400">Seleccionar Liga</span>
+                            {% endif %}
+                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                        </button>
+
+                        <div x-show="open" 
+                             class="absolute left-0 mt-2 w-56 bg-white rounded-md shadow-xl py-2 z-50 text-slate-800 border border-gray-100"
+                             style="display: none;">
+                            
+                            <div class="px-4 py-2 text-xs font-bold text-gray-400 uppercase">Cambiar Competición</div>
+                            
+                            {% for comp in lista_competencias %}
+                            <a href="{% url 'cambiar_competencia' comp.id %}" 
+                               class="block px-4 py-2 text-sm hover:bg-yellow-50 hover:text-yellow-700 flex justify-between items-center group
+                               {% if comp.id == competencia_activa.id %}bg-slate-50 font-bold text-blue-600{% endif %}">
+                                <span>{{ comp.name }}</span>
+                                {% if comp.id == competencia_activa.id %}
+                                    <span class="text-blue-500">●</span>
+                                {% endif %}
+                            </a>
+                            {% empty %}
+                                <span class="block px-4 py-2 text-sm text-gray-400">No hay ligas cargadas</span>
+                            {% endfor %}
+                        </div>
+                    </div>
                 </div>
 
                 <div class="flex items-center space-x-4">
-                    <a href="{% url 'mis_torneos' %}" class="text-gray-300 hover:bg-slate-800 hover:text-white px-3 py-2 rounded-md text-sm font-medium">
-                        ⚔️ Mis Torneos
-                    </a>
-
                     {% if user.is_staff %}
-                        <a href="{% url 'actualizar_web' %}" class="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-md text-xs font-bold uppercase tracking-wider flex items-center border border-red-800 shadow-sm transition" title="Actualizar resultados desde la API">
-                            🔄 Actualizar
-                        </a>
+                        <a href="{% url 'actualizar_web' %}" class="text-gray-400 hover:text-white" title="Actualizar API">🔄</a>
                     {% endif %}
+
                     {% if user.is_authenticated %}
-                        <div class="flex items-center space-x-4 bg-slate-800 px-3 py-1 rounded-full">
-                            <span class="text-sm text-yellow-400 font-semibold">{{ user.username }}</span>
-                            <form action="{% url 'account_logout' %}" method="post" class="inline">
+                        <div class="flex items-center space-x-3">
+                            <span class="text-sm font-medium hidden md:block">{{ user.username }}</span>
+                            <form action="{% url 'account_logout' %}" method="post">
                                 {% csrf_token %}
-                                <button type="submit" class="text-xs text-red-400 hover:text-red-300 underline">Salir</button>
+                                <button type="submit" class="text-xs bg-slate-800 hover:bg-red-900 text-red-400 px-3 py-1 rounded transition">Salir</button>
                             </form>
                         </div>
                     {% else %}
-                        <a href="{% url 'account_login' %}" class="bg-yellow-500 hover:bg-yellow-600 text-slate-900 px-4 py-2 rounded-md text-sm font-bold transition">
-                            Ingresar
-                        </a>
+                        <a href="{% url 'account_login' %}" class="bg-yellow-500 hover:bg-yellow-600 text-slate-900 px-4 py-2 rounded-md text-sm font-bold transition">Ingresar</a>
                     {% endif %}
                 </div>
             </div>
         </div>
     </nav>
 
+    <div class="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <nav class="flex space-x-8 overflow-x-auto no-scrollbar" aria-label="Tabs">
+                
+                <a href="{% url 'home' %}" 
+                   class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition
+                   {% if request.resolver_match.url_name == 'home' or request.resolver_match.url_name == 'predecir' %}
+                        border-blue-500 text-blue-600
+                   {% else %}
+                        border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
+                   {% endif %}">
+                   📝 Pronósticos
+                </a>
+
+                <a href="{% url 'mis_torneos' %}" 
+                   class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition
+                   {% if 'torneo' in request.resolver_match.url_name %}
+                        border-blue-500 text-blue-600
+                   {% else %}
+                        border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
+                   {% endif %}">
+                   🏆 Mis Torneos
+                </a>
+
+                <a href="{% url 'fixture' %}" 
+                   class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition
+                   {% if request.resolver_match.url_name == 'fixture' %}
+                        border-blue-500 text-blue-600
+                   {% else %}
+                        border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
+                   {% endif %}">
+                   📅 Fixture
+                </a>
+
+                <a href="{% url 'tabla' %}" 
+                   class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition
+                   {% if request.resolver_match.url_name == 'tabla' %}
+                        border-blue-500 text-blue-600
+                   {% else %}
+                        border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
+                   {% endif %}">
+                   📊 {% if competencia_activa.type == 'CUP' %}Grupos{% else %}Tabla{% endif %}
+                </a>
+
+            </nav>
+        </div>
+    </div>
+
     <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {% if messages %}
-        <div class="max-w-4xl mx-auto mt-6 px-4">
-            {% for message in messages %}
-                <div class="p-4 mb-4 rounded-md shadow-sm border flex items-center
-                    {% if message.tags == 'error' %} 
-                        bg-red-50 text-red-700 border-red-200 
-                    {% elif message.tags == 'success' %} 
-                        bg-green-50 text-green-700 border-green-200 
-                    {% elif message.tags == 'warning' %} 
-                        bg-yellow-50 text-yellow-700 border-yellow-200 
-                    {% else %} 
-                        bg-blue-50 text-blue-700 border-blue-200 
-                    {% endif %}">
-                    
-                    <span class="mr-2 text-xl">
-                        {% if message.tags == 'error' %}🚫
-                        {% elif message.tags == 'success' %}✅
-                        {% elif message.tags == 'warning' %}⚠️
-                        {% else %}{% endif %}
-                    </span>
-                    
-                    <span class="font-medium">{{ message }}</span>
-                </div>
-            {% endfor %}
-        </div>
-    {% endif %}
+            <div class="max-w-4xl mx-auto mb-6">
+                {% for message in messages %}
+                    <div class="p-4 rounded-md shadow-sm border mb-2 text-sm font-medium
+                        {% if message.tags == 'error' %}bg-red-50 text-red-700 border-red-200
+                        {% elif message.tags == 'success' %}bg-green-50 text-green-700 border-green-200
+                        {% else %}bg-blue-50 text-blue-700 border-blue-200{% endif %}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
 
-    {% block content %}
-    {% endblock %}
+        {% block content %}
+        {% endblock %}
     </main>
 
-    <footer class="bg-slate-900 text-gray-400 py-6 mt-auto">
-        <div class="max-w-7xl mx-auto px-4 text-center text-sm">
+    <footer class="bg-slate-900 text-gray-500 py-6 mt-auto border-t border-slate-800">
+        <div class="max-w-7xl mx-auto px-4 text-center text-xs">
             <p>&copy; 2026 Prode System - Desarrollado por Facundo</p>
         </div>
     </footer>
@@ -1998,118 +2220,107 @@ ARCHIVO: .\core\templates\core\home.html
 
 {% block content %}
 
-    <div class="text-center mb-10">
-        <h1 class="text-4xl font-extrabold text-slate-900 tracking-tight">Próximos Partidos</h1>
-        <p class="mt-2 text-lg text-gray-600">Predice los resultados y compite con tus amigos.</p>
+    <div class="text-center mb-8">
+        <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight">Pronósticos</h1>
+        <p class="text-gray-600 text-sm">Juega fecha a fecha en {{ competencia_activa.name }}</p>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    <div class="max-w-4xl mx-auto space-y-4">
         
-        {% for item in lista_partidos %}
-            <div class="bg-white rounded-xl shadow-md overflow-hidden hover:shadow-lg transition-shadow duration-300 border border-gray-100 flex flex-col">
-                
-                <div class="bg-slate-50 px-4 py-2 text-center text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-100">
-                    {{ item.partido.date|date:"D d M, H:i" }} hs
+        {% for grupo in fixture_agrupado %}
+        <div x-data="{ open: {% if forloop.first %}true{% else %}false{% endif %} }" 
+             class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            
+            <button @click="open = !open" class="w-full flex justify-between items-center px-6 py-4 bg-slate-50 hover:bg-slate-100 transition border-b border-gray-100">
+                <h2 class="text-lg font-bold text-slate-800">{{ grupo.nombre }}</h2>
+                <div class="flex items-center space-x-3">
+                    <span class="text-xs text-gray-500 font-medium">{{ grupo.partidos|length }} partidos</span>
+                    <svg :class="{'rotate-180': open}" class="w-5 h-5 text-gray-400 transform transition-transform duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                    </svg>
                 </div>
+            </button>
 
-                <div class="p-6 flex-grow flex flex-col items-center justify-center">
+            <div x-show="open" x-collapse class="divide-y divide-gray-100">
+                
+                {% for item in grupo.partidos %}
+                <div class="p-4 hover:bg-gray-50 transition flex flex-col sm:flex-row items-center justify-between gap-4">
                     
-                    <div class="flex items-center justify-between w-full mb-4">
-                        
-                        <div class="flex flex-col items-center w-1/3">
-                            <div class="w-16 h-16 flex items-center justify-center mb-2">
-                                {% if item.partido.home_team.logo %}
-                                    <img src="{{ item.partido.home_team.logo }}" alt="{{ item.partido.home_team.name }}" class="w-full h-full object-contain filter drop-shadow-sm">
-                                {% else %}
-                                    <div class="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center text-2xl shadow-sm">
-                                        {{ item.partido.home_team.flag_code|default:"🏠" }}
-                                    </div>
-                                {% endif %}
-                            </div>
-                            <span class="font-bold text-slate-800 text-center leading-tight text-sm">{{ item.partido.home_team.name }}</span>
-                        </div>
+                    <div class="text-center sm:text-left min-w-[80px]">
+                        <span class="block text-xs font-bold text-gray-400 uppercase">{{ item.partido.date|date:"D d" }}</span>
+                        <span class="block text-xs text-gray-400">{{ item.partido.date|date:"H:i" }}</span>
+                        {% if item.partido.status == 'IN_PLAY' %}
+                            <span class="text-[10px] text-red-500 font-bold animate-pulse">EN VIVO</span>
+                        {% endif %}
+                    </div>
 
-                        <div class="w-1/3 text-center flex flex-col items-center justify-center">
-                            {% if item.partido.status == 'FINISHED' %}
-                                <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Final</span>
-                                <div class="text-3xl font-black text-slate-900 tracking-tighter">
-                                    {{ item.partido.home_goals }} - {{ item.partido.away_goals }}
-                                </div>
+                    <div class="flex-grow flex items-center justify-center space-x-4 w-full sm:w-auto">
+                        <div class="flex items-center justify-end w-1/3 space-x-2 text-right">
+                            <span class="font-bold text-slate-800 text-sm md:text-base hidden md:block">{{ item.partido.home_team.name }}</span>
+                            <span class="font-bold text-slate-800 text-sm md:text-base md:hidden">{{ item.partido.home_team.name|slice:":3"|upper }}</span>
+                            {% if item.partido.home_team.logo %}
+                                <img src="{{ item.partido.home_team.logo }}" class="w-8 h-8 object-contain">
                             {% else %}
-                                <div class="text-2xl font-bold text-gray-300 italic">VS</div>
-                                {% if item.partido.status != 'IN_PLAY' %}
-                                    <span class="text-xs text-blue-500 font-bold mt-1">{{ item.partido.date|date:"H:i" }} hs</span>
-                                {% endif %}
+                                <div class="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center text-xs">🏠</div>
                             {% endif %}
                         </div>
 
-                        <div class="flex flex-col items-center w-1/3">
-                            <div class="w-16 h-16 flex items-center justify-center mb-2">
-                                {% if item.partido.away_team.logo %}
-                                    <img src="{{ item.partido.away_team.logo }}" alt="{{ item.partido.away_team.name }}" class="w-full h-full object-contain filter drop-shadow-sm">
-                                {% else %}
-                                    <div class="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center text-2xl shadow-sm">
-                                        {{ item.partido.away_team.flag_code|default:"✈️" }}
-                                    </div>
-                                {% endif %}
-                            </div>
-                            <span class="font-bold text-slate-800 text-center leading-tight text-sm">{{ item.partido.away_team.name }}</span>
+                        <div class="font-black text-xl text-slate-900 bg-slate-100 px-3 py-1 rounded min-w-[60px] text-center">
+                            {% if item.partido.status == 'FINISHED' or item.partido.status == 'IN_PLAY' %}
+                                {{ item.partido.home_goals }}-{{ item.partido.away_goals }}
+                            {% else %}
+                                VS
+                            {% endif %}
+                        </div>
+
+                        <div class="flex items-center justify-start w-1/3 space-x-2 text-left">
+                            {% if item.partido.away_team.logo %}
+                                <img src="{{ item.partido.away_team.logo }}" class="w-8 h-8 object-contain">
+                            {% else %}
+                                <div class="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center text-xs">✈️</div>
+                            {% endif %}
+                            <span class="font-bold text-slate-800 text-sm md:text-base hidden md:block">{{ item.partido.away_team.name }}</span>
+                            <span class="font-bold text-slate-800 text-sm md:text-base md:hidden">{{ item.partido.away_team.name|slice:":3"|upper }}</span>
                         </div>
                     </div>
 
-                    <div class="w-full mt-4 pt-4 border-t border-dashed border-gray-200 text-center">
-                        
+                    <div class="w-full sm:w-auto min-w-[140px]">
                         {% if item.partido.status == 'FINISHED' %}
-                            
-                            {% if item.prediccion %}
-                                <div class="bg-blue-50 border border-blue-100 rounded-lg p-2">
-                                    <p class="text-[10px] text-blue-500 font-bold uppercase mb-1">Tu Pronóstico</p>
-                                    <p class="text-xl font-bold text-blue-900 font-mono">
-                                        {{ item.prediccion.predicted_home }} - {{ item.prediccion.predicted_away }}
-                                    </p>
-                                    <div class="mt-1">
-                                        {% if item.prediccion.points == 3 %}
-                                            <span class="bg-yellow-400 text-yellow-900 text-[10px] font-bold px-2 py-0.5 rounded shadow-sm">🌟 ¡EXACTO! (+3)</span>
-                                        {% elif item.prediccion.points == 1 %}
-                                            <span class="bg-green-200 text-green-800 text-[10px] font-bold px-2 py-0.5 rounded">✔️ TENDENCIA (+1)</span>
-                                        {% else %}
-                                            <span class="bg-gray-200 text-gray-500 text-[10px] font-bold px-2 py-0.5 rounded">❌ FALLO (+0)</span>
-                                        {% endif %}
-                                    </div>
-                                </div>
-                            {% else %}
-                                <div class="bg-red-50 border border-red-100 text-red-500 py-3 rounded-lg text-center font-bold text-sm">
-                                    ❌ ¡No jugaste!
-                                </div>
-                            {% endif %}
-
+                            <div class="text-center">
+                                {% if item.prediccion %}
+                                    <span class="text-xs font-bold text-blue-600 block">Tu pronóstico:</span>
+                                    <span class="font-mono font-bold text-lg">{{ item.prediccion.predicted_home }} - {{ item.prediccion.predicted_away }}</span>
+                                    
+                                    {% if item.prediccion.points > 0 %}
+                                        <span class="block text-[10px] bg-green-100 text-green-700 px-1 rounded mt-1">+{{ item.prediccion.points }} pts</span>
+                                    {% else %}
+                                        <span class="block text-[10px] bg-gray-100 text-gray-500 px-1 rounded mt-1">0 pts</span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="text-xs text-red-400 font-bold">No jugado</span>
+                                {% endif %}
+                            </div>
                         {% else %}
-
-                            {% if item.partido.status == 'IN_PLAY' or item.partido.status == 'PAUSED' %}
-                                <a href="{% url 'predecir' item.partido.id %}" class="block w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-md animate-pulse text-center">
-                                    ⚽ ¡EN VIVO! - Ver/Jugar
+                            {% if item.prediccion %}
+                                <a href="{% url 'predecir' item.partido.id %}" class="block w-full text-center bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold py-2 px-4 rounded-lg text-sm transition">
+                                    ✏️ {{ item.prediccion.predicted_home }}-{{ item.prediccion.predicted_away }}
                                 </a>
                             {% else %}
-                                {% if item.prediccion %}
-                                    <a href="{% url 'predecir' item.partido.id %}" class="block w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2 rounded-lg text-center border border-slate-300 transition text-sm">
-                                        ✏️ Modificar ({{ item.prediccion.predicted_home }}-{{ item.prediccion.predicted_away }})
-                                    </a>
-                                {% else %}
-                                    <a href="{% url 'predecir' item.partido.id %}" class="block w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-4 rounded-lg transition shadow-md hover:shadow-lg transform hover:-translate-y-0.5 text-center">
-                                        ¡Jugar Ahora!
-                                    </a>
-                                {% endif %}
+                                <a href="{% url 'predecir' item.partido.id %}" class="block w-full text-center bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-4 rounded-lg text-sm shadow transition">
+                                    Jugar
+                                </a>
                             {% endif %}
-
                         {% endif %}
-
                     </div>
 
                 </div>
+                {% endfor %}
             </div>
+        </div>
         {% empty %}
-            <div class="col-span-3 text-center py-20">
-                <p class="text-gray-500 text-xl">No hay partidos cargados aún.</p>
+            <div class="text-center py-12">
+                <p class="text-gray-500 text-lg">No hay partidos cargados para esta competición.</p>
+                <p class="text-sm text-gray-400">Verifica que hayas corrido el script de actualización.</p>
             </div>
         {% endfor %}
     </div>
@@ -2353,7 +2564,7 @@ ARCHIVO: .\core\templates\socialaccount\login.html
     <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-md border border-gray-200 text-center">
 
         <div class="mb-6 flex justify-center">
-             <img src="https://www.svgrepo.com/show/475656/google-color.svg" class="w-12 h-12 animate-bounce" alt="Google">
+        <img src="https://www.svgrepo.com/show/475656/google-color.svg" class="w-12 h-12 animate-bounce" alt="Google">
         </div>
 
         <h2 class="text-2xl font-bold text-gray-800 mb-4">

@@ -1,0 +1,69 @@
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+
+    <div class="text-center mb-8">
+        <h1 class="text-3xl font-extrabold text-slate-900">Tabla de Posiciones</h1>
+        <p class="text-gray-500">{{ competencia.name }}</p>
+    </div>
+
+    {% for grupo in tabla_agrupada %}
+    <div class="mb-8 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        
+        <div class="bg-slate-50 px-6 py-3 border-b border-gray-200">
+            <h2 class="font-bold text-slate-700">{{ grupo.nombre_grupo }}</h2>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm text-left">
+                <thead class="text-xs text-gray-500 uppercase bg-gray-50 border-b">
+                    <tr>
+                        <th class="px-4 py-3 text-center">Pos</th>
+                        <th class="px-4 py-3">Equipo</th>
+                        <th class="px-4 py-3 text-center font-bold text-black">Pts</th>
+                        <th class="px-2 py-3 text-center hidden sm:table-cell">PJ</th>
+                        <th class="px-2 py-3 text-center hidden md:table-cell">PG</th>
+                        <th class="px-2 py-3 text-center hidden md:table-cell">PE</th>
+                        <th class="px-2 py-3 text-center hidden md:table-cell">PP</th>
+                        <th class="px-2 py-3 text-center hidden sm:table-cell">DG</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    {% for stat in grupo.equipos %}
+                    <tr class="hover:bg-slate-50 transition">
+                        <td class="px-4 py-3 text-center font-bold 
+                            {% if stat.position <= 2 %}text-green-600{% elif stat.position >= 18 %}text-red-500{% else %}text-gray-500{% endif %}">
+                            {{ stat.position }}
+                        </td>
+                        <td class="px-4 py-3 font-medium text-slate-900 flex items-center space-x-2">
+                            {% if stat.team.logo %}
+                                <img src="{{ stat.team.logo }}" class="w-6 h-6 object-contain">
+                            {% endif %}
+                            <span>{{ stat.team.name }}</span>
+                        </td>
+                        <td class="px-4 py-3 text-center font-black text-slate-900 text-base bg-slate-50">
+                            {{ stat.points }}
+                        </td>
+                        <td class="px-2 py-3 text-center hidden sm:table-cell text-gray-600">{{ stat.played }}</td>
+                        <td class="px-2 py-3 text-center hidden md:table-cell text-green-600">{{ stat.won }}</td>
+                        <td class="px-2 py-3 text-center hidden md:table-cell text-yellow-600">{{ stat.drawn }}</td>
+                        <td class="px-2 py-3 text-center hidden md:table-cell text-red-600">{{ stat.lost }}</td>
+                        <td class="px-2 py-3 text-center hidden sm:table-cell font-bold text-slate-700">
+                            {% if stat.goal_diff > 0 %}+{% endif %}{{ stat.goal_diff }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% empty %}
+    <div class="text-center py-12 bg-white rounded-lg border border-dashed border-gray-300">
+        <p class="text-gray-500">No hay tabla de posiciones cargada.</p>
+        <p class="text-sm text-gray-400">Ejecuta el script de carga de tablas.</p>
+    </div>
+    {% endfor %}
+
+</div>
+{% endblock %}

@@ -20,7 +20,7 @@ from core.views import home, predecir_partido # <--- Importamos la nueva vista
 from core.views import home, predecir_partido, ranking  # <--- Agregamos ranking
 from django.urls import path, include # <--- Agrega include aquí
 from core.views import home, predecir_partido, ranking, actualizar_partidos_web, mis_torneos, buscar_torneo, unirse_torneo, gestionar_torneo, responder_solicitud, eliminar_torneo # <--- Importala
-from core.views import correr_migraciones_web, cargar_fixture_inicial
+from core.views import correr_migraciones_web, cargar_fixture_inicial, cambiar_competencia, fixture, tabla_posiciones, cargar_tabla, debug_datos, crear_torneo, unirse_por_codigo, detalle_torneo
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -44,5 +44,15 @@ urlpatterns = [
     path('solicitud/<int:member_id>/<str:accion>/', responder_solicitud, name='responder_solicitud'),
     path('torneo/<int:tournament_id>/eliminar/', eliminar_torneo, name='eliminar_torneo'),
     path('migrar-emergencia/', correr_migraciones_web),
-    path('cargar-fixture-magico/', cargar_fixture_inicial),
+    path('cargar-fixture/<int:id_liga>/', cargar_fixture_inicial, name='cargar_fixture'),
+    path('cambiar-liga/<int:comp_id>/', cambiar_competencia, name='cambiar_competencia'),
+    path('fixture/', fixture, name='fixture'),
+    path('tabla/', tabla_posiciones, name='tabla'),
+    path('cargar-tabla/<int:id_liga>/', cargar_tabla, name='cargar_tabla'),
+    path('debug/', debug_datos, name='debug'),
+    path('crear-torneo/', crear_torneo, name='crear_torneo'),
+    # En core/urls.py
+    path('unirse-codigo/', unirse_por_codigo, name='unirse_por_codigo'),
+    path('torneo/<int:tournament_id>/', detalle_torneo, name='detalle_torneo'),
 ]
+

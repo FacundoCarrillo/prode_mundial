@@ -3,8 +3,8 @@
 {% block content %}
 
     <div class="text-center mb-6">
-        <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight">Pronósticos</h1>
-        <p class="text-gray-600 text-sm">Juega fecha a fecha en {{ competencia_activa.name }}</p>
+        <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight">Fixture</h1>
+        <p class="text-gray-600 text-sm">Calendario de {{ competencia_activa.name }}</p>
     </div>
 
     <div class="max-w-4xl mx-auto mb-8 px-4 sm:px-0">
@@ -38,7 +38,7 @@
         {% if partidos_mostrar %}
             
             {% for item in partidos_mostrar %}
-            <div id="match-{{ item.partido.id }}" class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden p-4 hover:bg-gray-50 transition flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden p-4 hover:bg-gray-50 transition flex flex-col sm:flex-row items-center justify-between gap-4">
                 
                 <div class="text-center sm:text-left min-w-[80px]">
                     <span class="block text-xs font-bold text-gray-400 uppercase">{{ item.partido.date|date:"D d" }}</span>
@@ -79,47 +79,16 @@
                     </div>
                 </div>
 
-                <div class="w-full sm:w-auto min-w-[140px]">
-                    {% if item.partido.status == 'FINISHED' %}
-                        <div class="text-center bg-gray-50 p-2 rounded border border-gray-200">
-                            <span class="text-[10px] font-bold text-gray-500 uppercase block mb-1">Tu Predicción</span>
-                            <span class="font-mono font-bold text-lg text-slate-800 block">
-                                {% if item.prediccion %}
-                                    {{ item.prediccion.predicted_home }} - {{ item.prediccion.predicted_away }}
-                                {% else %}
-                                    -
-                                {% endif %}
-                            </span>
-
-                            <div class="mt-1 border-t border-gray-200 pt-1">
-                                {% if item.prediccion %}
-                                    {% if item.prediccion.points > 0 %}
-                                        <span class="text-xs font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full">
-                                            +{{ item.prediccion.points }} pts
-                                        </span>
-                                    {% else %}
-                                        <span class="text-xs font-bold text-gray-400">
-                                            ptos: {{ item.prediccion.points }}
-                                        </span>
-                                    {% endif %}
-                                {% else %}
-                                    <span class="text-xs font-bold text-gray-400">
-                                        ptos: 0
-                                    </span>
-                                {% endif %}
-                            </div>
-                        </div>
-                    {% else %}
-                        {% if item.prediccion %}
-                            <a href="{% url 'predecir' item.partido.id %}" class="block w-full text-center bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold py-2 px-4 rounded-lg text-sm transition">
-                                ✏️ {{ item.prediccion.predicted_home }}-{{ item.prediccion.predicted_away }}
-                            </a>
+                <div class="w-full sm:w-auto min-w-[140px] text-center">
+                    <span class="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                        {% if item.partido.status == 'FINISHED' %}
+                            Finalizado
+                        {% elif item.partido.status == 'IN_PLAY' %}
+                            Jugando
                         {% else %}
-                            <a href="{% url 'predecir' item.partido.id %}" class="block w-full text-center bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-4 rounded-lg text-sm shadow transition">
-                                Jugar
-                            </a>
+                            Pendiente
                         {% endif %}
-                    {% endif %}
+                    </span>
                 </div>
 
             </div>
@@ -128,24 +97,8 @@
         {% else %}
             <div class="text-center py-16 bg-white rounded-xl border border-dashed border-gray-300">
                 <p class="text-gray-500 text-lg font-medium">No hay partidos para esta fecha.</p>
-                <p class="text-sm text-gray-400 mt-1">Intenta seleccionar otra en el menú.</p>
             </div>
         {% endif %}
     </div>
-
-    <script>
-        (function() {
-            if (window.location.hash) {
-                var id = window.location.hash.substring(1);
-                var element = document.getElementById(id);
-                if (element) {
-                    window.scrollTo({
-                        top: element.offsetTop - 100, 
-                        behavior: 'instant' 
-                    });
-                }
-            }
-        })();
-    </script>
 
 {% endblock %}

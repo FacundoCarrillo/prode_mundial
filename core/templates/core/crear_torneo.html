@@ -1,0 +1,35 @@
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="max-w-md mx-auto bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden mt-10">
+    <div class="bg-slate-900 px-6 py-4">
+        <h2 class="text-xl font-bold text-white">Crear Nuevo Torneo</h2>
+        <p class="text-slate-400 text-xs">En {{ competencia.name }}</p>
+    </div>
+    
+    <form method="post" class="p-6 space-y-4">
+        {% csrf_token %}
+        
+        <div>
+            <label class="block text-sm font-bold text-gray-700 mb-2">Nombre del Torneo</label>
+            <input type="text" name="name" required 
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-slate-500 focus:border-slate-500"
+                placeholder="Ej: La Copa de los Amigos">
+        </div>
+
+        {% if form.image %}
+        <div>
+            <label class="block text-sm font-bold text-gray-700 mb-2">Imagen (URL)</label>
+            <input type="url" name="image" 
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-slate-500 focus:border-slate-500"
+                placeholder="https://...">
+        </div>
+        {% endif %}
+
+        <div class="flex gap-3 pt-4">
+            <a href="{% url 'mis_torneos' %}" class="flex-1 text-center py-2 px-4 border border-gray-300 rounded-lg text-gray-700 font-bold hover:bg-gray-50">Cancelar</a>
+            <button type="submit" class="flex-1 bg-slate-900 text-white font-bold py-2 px-4 rounded-lg hover:bg-slate-800 shadow-lg">Crear Torneo</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

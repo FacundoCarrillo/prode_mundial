@@ -1,5 +1,5 @@
 from django.shortcuts import render, redirect, get_object_or_404
-from .models import Match, Prediction, Team, Tournament, TournamentMember
+from .models import Match, Prediction, Team, Tournament, TournamentMember, Competition, Standing
 from .forms import PredictionForm
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
@@ -14,33 +14,76 @@ from django.contrib import messages
 from django.db.models import Sum
 import requests
 from datetime import timedelta
+from itertools import groupby
+from operator import attrgetter
 
+# En core/views.py
+
+@login_required
 def home(request):
-    # 1. Traemos todos los partidos
-    partidos = Match.objects.all()
+    # 1. Competencia Activa
+    comp_id = request.session.get('competencia_id')
+    if not comp_id:
+        first_comp = Competition.objects.first()
+        if first_comp:
+            comp_id = first_comp.id
+            request.session['competencia_id'] = comp_id
     
-    # 2. Preparamos un diccionario rápido de predicciones del usuario
-    predicciones_dict = {}
-    if request.user.is_authenticated:
-        predicciones = Prediction.objects.filter(user=request.user)
-        # Creamos un diccionario { id_partido: objeto_prediccion }
-        predicciones_dict = {p.match.id: p for p in predicciones}
+    competencia_activa = None
+    partidos = Match.objects.none()
+    
+    if comp_id:
+        competencia_activa = Competition.objects.get(id=comp_id)
+        # Filtramos por competencia para que no se mezclen
+        partidos = Match.objects.filter(competition_id=comp_id).order_by('date')
 
-    # 3. Armamos la lista FINAL combinada
-    lista_final = []
+    # 2. Agrupar Partidos para el Menú
+    grupos_temp = {}
+    rondas_nombres = [] 
+
     for partido in partidos:
-        # Buscamos si hay predicción para este partido (será None si no hay)
-        prediccion_usuario = predicciones_dict.get(partido.id)
+        ronda = partido.round_name
+        if ronda not in grupos_temp:
+            grupos_temp[ronda] = []
+            rondas_nombres.append(ronda)
         
-        # Guardamos todo junto en un paquetito
+        # Buscamos predicción del usuario
+        pred = Prediction.objects.filter(user=request.user, match=partido).first()
+        
         item = {
             'partido': partido,
-            'prediccion': prediccion_usuario
+            'prediccion': pred
         }
-        lista_final.append(item)
-            
-    # Enviamos 'lista_partidos' en lugar de las dos variables sueltas
-    return render(request, 'core/home.html', {'lista_partidos': lista_final})
+        grupos_temp[ronda].append(item)
+
+    # 3. Lógica del Selector de Fechas
+    ronda_seleccionada = request.GET.get('ronda')
+
+    # Si no eligió nada, buscamos la más cercana a HOY
+    if not ronda_seleccionada and rondas_nombres:
+        hoy = timezone.now()
+        partido_futuro = partidos.filter(date__gte=hoy).first()
+        
+        if partido_futuro:
+            ronda_seleccionada = partido_futuro.round_name
+        else:
+            # Si ya terminó todo, mostramos la última fecha
+            ronda_seleccionada = rondas_nombres[-1]
+
+    # Obtenemos los partidos de esa fecha específica
+    grupo_activo = []
+    if ronda_seleccionada and ronda_seleccionada in grupos_temp:
+        grupo_activo = grupos_temp[ronda_seleccionada]
+    
+    # Ordenamos por horario
+    grupo_activo.sort(key=lambda x: x['partido'].date)
+
+    return render(request, 'core/home.html', {
+        'competencia_activa': competencia_activa,
+        'rondas_disponibles': rondas_nombres,   # <--- Esto llena el menú
+        'ronda_actual': ronda_seleccionada,     # <--- Esto marca la opción
+        'partidos_mostrar': grupo_activo        # <--- Esto llena la lista
+    })
 
 @login_required # ¡Ojo! Solo usuarios logueados pueden predecir
 def predecir_partido(request, match_id):
@@ -68,7 +111,14 @@ def predecir_partido(request, match_id):
             prediccion.user = request.user
             prediccion.match = partido
             prediccion.save() # ¡Ahora sí guardamos!
-            return redirect('home') # Lo mandamos al inicio
+            # --- CAMBIO AQUÍ: REDIRECCIÓN INTELIGENTE ---
+            # 1. Obtenemos el nombre de la ronda (Ej: "Fecha 16")
+            ronda = partido.round_name
+            
+            # 2. Armamos la URL para que abra esa ronda y baje hasta el partido
+            # El signo # hace que el navegador baje hasta el ID del partido
+            return redirect(f"/?ronda={ronda}#group-{ronda}")
+            # --------------------------------------------# Lo mandamos al inicio
     else:
         # Si solo está visitando la página, mostramos el form (vacío o con datos previos)
         form = PredictionForm(instance=prediccion_existente)
@@ -131,7 +181,7 @@ def actualizar_partidos_web(request):
         return redirect('home')
 
     # --- TU TOKEN REAL AQUÍ ---
-    API_TOKEN = '1988cfde850245faaaceaf5d9ff33ada' # <--- REVISA QUE ESTÉ TU TOKEN PUESTO
+    API_TOKEN = '1988cfde850245faaaceaf5d9ff33ada' 
     # --------------------------
     
     base_url = "https://api.football-data.org/v4/matches"
@@ -147,7 +197,7 @@ def actualizar_partidos_web(request):
         'dateTo': manana.strftime('%Y-%m-%d')
     }
 
-    reporte = [] # <--- Lista para guardar lo que vemos
+    reporte = [] 
 
     try:
         response = requests.get(base_url, headers=headers, params=params)
@@ -178,42 +228,52 @@ def actualizar_partidos_web(request):
                 if partido_db:
                     info_partido['accion'] = '✅ Actualizado'
                     
-                    # Actualizar datos
+                    # 1. ACTUALIZAR DATOS BÁSICOS
                     if goles_local is not None:
                         partido_db.home_goals = goles_local
                         partido_db.away_goals = goles_visitante
                     
                     partido_db.date = item['utcDate']
+                    partido_db.status = estado # Guardamos el estado (FINISHED, TIMED, etc)
                     partido_db.save()
 
-                    # Calcular Puntos
-                    preds = Prediction.objects.filter(match=partido_db)
-                    puntos_repartidos = 0
-                    
-                    for pred in preds:
-                        pts = 0
-                        if pred.predicted_home == goles_local and pred.predicted_away == goles_visitante:
-                            pts = 3
-                        else:
-                            # Lógica simple de ganador
-                            winner_real = "H" if goles_local > goles_visitante else "A" if goles_visitante > goles_local else "D"
-                            winner_pred = "H" if pred.predicted_home > pred.predicted_away else "A" if pred.predicted_away > pred.predicted_home else "D"
-                            if winner_real == winner_pred:
-                                pts = 1
+                    # 2. CALCULAR PUNTOS (🔥 CORRECCIÓN AQUÍ 🔥)
+                    # Solo entramos a calcular si EFECTIVAMENTE hay goles cargados
+                    if goles_local is not None and goles_visitante is not None:
                         
-                        if pred.points != pts:
-                            pred.points = pts
-                            pred.save()
-                            puntos_repartidos += 1
+                        preds = Prediction.objects.filter(match=partido_db)
+                        puntos_repartidos = 0
+                        
+                        # Calculamos ganador real (Ahora es seguro porque no son None)
+                        winner_real = "H" if goles_local > goles_visitante else "A" if goles_visitante > goles_local else "D"
+                        
+                        for pred in preds:
+                            pts = 0
+                            # A. Acierto Exacto (3 pts)
+                            if pred.predicted_home == goles_local and pred.predicted_away == goles_visitante:
+                                pts = 3
+                            else:
+                                # B. Acierto de Tendencia (1 pt)
+                                winner_pred = "H" if pred.predicted_home > pred.predicted_away else "A" if pred.predicted_away > pred.predicted_home else "D"
+                                
+                                if winner_real == winner_pred:
+                                    pts = 1
                             
-                    if puntos_repartidos > 0:
-                        info_partido['accion'] += f" y Puntos Recalculados ({puntos_repartidos} preds)"
+                            # Guardar solo si cambió el puntaje
+                            if pred.points != pts:
+                                pred.points = pts
+                                pred.save()
+                                puntos_repartidos += 1
+                                
+                        if puntos_repartidos > 0:
+                            info_partido['accion'] += f" y Puntos Recalculados ({puntos_repartidos} preds)"
 
                 reporte.append(info_partido)
 
-            # Recalcular Torneos Globalmente
+            # 3. RECALCULAR PUNTAJES TOTALES DE LOS TORNEOS
             miembros = TournamentMember.objects.filter(status='ACCEPTED')
             for m in miembros:
+                # Sumamos todos los puntos de las predicciones de este usuario
                 total = Prediction.objects.filter(user=m.user).aggregate(Sum('points'))['points__sum'] or 0
                 if m.points != total:
                     m.points = total
@@ -223,65 +283,56 @@ def actualizar_partidos_web(request):
             messages.warning(request, "La API respondió OK pero sin partidos.")
 
     except Exception as e:
+        print(f"ERROR EN UPDATE: {e}") # Para ver en la consola negra
         messages.error(request, f"Error: {e}")
         return redirect('mis_torneos')
 
-    # EN LUGAR DE REDIRIGIR, MOSTRAMOS EL REPORTE
     return render(request, 'core/actualizar_resultados.html', {'reporte': reporte})
     
 @login_required
 def mis_torneos(request):
-    # 1. Torneos donde estoy jugando (ACEPTADO)
-    jugando = TournamentMember.objects.filter(
-        user=request.user, 
-        status='ACCEPTED'
-    ).select_related('tournament')
+    # --- 1. LÓGICA DE COMPETENCIA (Tu código original) ---
+    comp_id = request.session.get('competencia_id')
+    if not comp_id:
+        primera = Competition.objects.first()
+        if primera:
+            comp_id = primera.id
+            request.session['competencia_id'] = comp_id
+            
+    # Manejo seguro si no hay competencias
+    competencia_activa = None
+    if comp_id:
+        competencia_activa = get_object_or_404(Competition, id=comp_id)
 
-    # 2. Torneos donde espero aprobación (PENDIENTE)
-    pendientes = TournamentMember.objects.filter(
+    # --- 2. FILTRADO (Tu código + Adaptación al nuevo diseño) ---
+    
+    # Usamos 'mis_torneos' en el return para coincidir con el HTML nuevo
+    mis_torneos_list = TournamentMember.objects.filter(
         user=request.user, 
-        status='PENDING'
-    ).select_related('tournament')
+        status='ACCEPTED',
+        tournament__competition=competencia_activa # <--- ¡MANTENEMOS EL FILTRO!
+    ).select_related('tournament').order_by('-joined_at')
 
-    if request.method == 'POST':
-        # --- NUEVA VALIDACIÓN: LÍMITE DE 3 TORNEOS ---
-        cantidad_creados = Tournament.objects.filter(creator=request.user).count()
-        
-        if cantidad_creados >= 3:
-            messages.error(request, "🚫 Límite alcanzado: Solo puedes administrar hasta 3 torneos a la vez.")
-            # --- CORRECCIÓN AQUÍ: ---
-            # Definimos el form aunque haya error, para que no falle el render de abajo.
-            form = TournamentForm(request.POST) 
-        # ---------------------------------------------
-        else:
-            # Si no llegó al límite, procesamos el formulario normalmente
-            form = TournamentForm(request.POST)
-            if form.is_valid():
-                torneo = form.save(commit=False)
-                torneo.creator = request.user
-                torneo.save()
-                
-                TournamentMember.objects.create(
-                    user=request.user, 
-                    tournament=torneo, 
-                    status='ACCEPTED'
-                )
-                messages.success(request, f'¡Torneo "{torneo.name}" creado!')
-                return redirect('mis_torneos')
-    else:
-        form = TournamentForm()
+    pendientes_list = TournamentMember.objects.filter(
+        user=request.user, 
+        status='PENDING',
+        tournament__competition=competencia_activa # <--- ¡MANTENEMOS EL FILTRO!
+    ).select_related('tournament').order_by('-joined_at')
+
+    # Nota: Ya no procesamos el formulario aquí porque el botón "Crear"
+    # del nuevo diseño lleva a una vista dedicada ('crear_torneo').
 
     return render(request, 'core/mis_torneos.html', {
-        'jugando': jugando,
-        'pendientes': pendientes,
-        'form': form
+        'mis_torneos': mis_torneos_list, 
+        'pendientes': pendientes_list,
+        'competencia_activa': competencia_activa
     })
 
 @login_required
 def buscar_torneo(request):
     query = request.GET.get('q')
     resultados = []
-    
+
     if query:
         # Buscamos por Nombre o por Código exacto
         resultados = Tournament.objects.filter(
@@ -385,80 +436,99 @@ def correr_migraciones_web(request):
     
 # --- AGREGAR AL FINAL DE core/views.py ---
 
-def cargar_fixture_inicial(request):
+# Asegúrate de tener estos imports arriba en views.py:
+# from .models import Match, Team, Competition  <-- IMPORTANTE AGREGAR Competition
+# import requests
+
+# En core/views.py
+
+def cargar_fixture_inicial(request, id_liga): # <--- AHORA RECIBE EL ID
     if not request.user.is_staff:
         return HttpResponse("⛔ Acceso denegado.")
 
     API_TOKEN = '1988cfde850245faaaceaf5d9ff33ada' 
-    COMPETITION_ID = '2021' 
+    
+    # YA NO ESTÁ FIJO. Usamos el que viene de la URL
+    COMPETITION_ID_API = id_liga 
     
     headers = {'X-Auth-Token': API_TOKEN}
-    url = f"https://api.football-data.org/v4/competitions/{COMPETITION_ID}/matches"
+    url = f"https://api.football-data.org/v4/competitions/{COMPETITION_ID_API}/matches"
 
-    log_html = "<h1>📝 Reporte de Carga</h1><ul>"
+    log_html = f"<h1>📝 Reporte de Carga (Liga ID: {id_liga})</h1><ul>"
     actualizados = 0
     nuevos = 0
 
     try:
+        try:
+            competencia_db = Competition.objects.get(api_id=COMPETITION_ID_API)
+        except Competition.DoesNotExist:
+            return HttpResponse(f"❌ Error: No existe la competición con ID {COMPETITION_ID_API} en tu base de datos. <br>Ve al Admin y créala primero.")
+
         response = requests.get(url, headers=headers)
         data = response.json()
         
         if 'matches' in data:
             for item in data['matches']:
-                # 1. Equipos (Igual que antes)
+                
+                # LOGICA UNIVERSAL (Sirve para Mundial, Premier, etc.)
+                nombre_local = item['homeTeam']['name'] or "A Confirmar"
+                nombre_visitante = item['awayTeam']['name'] or "A Confirmar"
+                flag_local = item['homeTeam'].get('tla') or 'XX'
+                flag_visitante = item['awayTeam'].get('tla') or 'XX'
+
+                # 1. Equipos
                 equipo_local, _ = Team.objects.get_or_create(
-                    name=item['homeTeam']['name'],
-                    defaults={'logo': item['homeTeam']['crest'], 'flag_code': item['homeTeam'].get('tla', 'XX')}
+                    name=nombre_local, 
+                    defaults={'logo': item['homeTeam'].get('crest'), 'flag_code': flag_local}
                 )
                 equipo_visitante, _ = Team.objects.get_or_create(
-                    name=item['awayTeam']['name'],
-                    defaults={'logo': item['awayTeam']['crest'], 'flag_code': item['awayTeam'].get('tla', 'XX')}
+                    name=nombre_visitante, 
+                    defaults={'logo': item['awayTeam'].get('crest'), 'flag_code': flag_visitante}
                 )
 
-                # 2. Datos del partido
+                # 2. Datos
                 fecha = item['utcDate']
                 estado = item['status']
                 gol_local = item['score']['fullTime']['home']
                 gol_visitante = item['score']['fullTime']['away']
+                
+                ronda_api = item.get('matchday')
+                nombre_ronda = f"Fecha {ronda_api}" if ronda_api else item.get('stage', 'General').replace('_', ' ').title()
 
-                # 3. BUSQUEDA MANUAL Y ACTUALIZACIÓN FORZADA
-                # Buscamos el partido por equipos (ignoramos fecha exacta por si cambió la hora)
+                # 3. Guardar
                 partido = Match.objects.filter(
+                    competition=competencia_db, 
                     home_team=equipo_local, 
                     away_team=equipo_visitante
                 ).first()
 
                 if partido:
-                    # SI YA EXISTE: Lo actualizamos a la fuerza
                     cambios = []
                     if partido.status != estado:
                         partido.status = estado
                         cambios.append("Estado")
-                    
                     if partido.home_goals != gol_local:
                         partido.home_goals = gol_local
                         partido.away_goals = gol_visitante
-                        cambios.append(f"Goles ({gol_local}-{gol_visitante})")
+                        cambios.append("Goles")
                     
                     if cambios:
                         partido.save()
                         actualizados += 1
-                        log_html += f"<li>✅ <b>{equipo_local} vs {equipo_visitante}</b>: Actualizado ({', '.join(cambios)})</li>"
-                    else:
-                        # Si no hubo cambios, no hacemos nada (pero sabemos que lo vimos)
-                        pass
+                        log_html += f"<li>✅ <b>{equipo_local} vs {equipo_visitante}</b>: Actualizado</li>"
                 else:
-                    # SI NO EXISTE: Lo creamos
                     Match.objects.create(
+                        competition=competencia_db,
                         home_team=equipo_local,
                         away_team=equipo_visitante,
                         date=fecha,
                         status=estado,
+                        round_name=nombre_ronda,
                         home_goals=gol_local,
                         away_goals=gol_visitante
                     )
                     nuevos += 1
-                    log_html += f"<li>🆕 <b>{equipo_local} vs {equipo_visitante}</b>: Creado Nuevo</li>"
+                    log_html += f"<li>🆕 <b>{equipo_local} vs {equipo_visitante}</b>: Creado</li>"
 
             log_html += f"</ul><h2>Resumen: {nuevos} Nuevos, {actualizados} Actualizados.</h2>"
             return HttpResponse(log_html)
@@ -467,4 +537,305 @@ def cargar_fixture_inicial(request):
             return HttpResponse(f"⚠️ La API respondió sin partidos. Data: {data}")
 
     except Exception as e:
-        return HttpResponse(f"❌ Error: {e}")
+        return HttpResponse(f"❌ Error crítico: {e}")
+    
+def cambiar_competencia(request, comp_id):
+    # Guardamos la elección en la "memoria" del navegador (Sesión)
+    request.session['competencia_id'] = comp_id
+    
+    # Redirigimos al usuario a la misma página donde estaba (o al home si falla)
+    return redirect(request.META.get('HTTP_REFERER', 'home'))
+
+# En core/views.py
+
+# En core/views.py
+
+def fixture(request):
+    # 1. Competencia Activa
+    comp_id = request.session.get('competencia_id')
+    if not comp_id:
+        first_comp = Competition.objects.first()
+        if first_comp:
+            comp_id = first_comp.id
+            request.session['competencia_id'] = comp_id
+    
+    competencia_activa = None
+    partidos = Match.objects.none()
+    
+    if comp_id:
+        competencia_activa = Competition.objects.get(id=comp_id)
+        # Filtramos por competencia
+        partidos = Match.objects.filter(competition_id=comp_id).order_by('date')
+
+    # 2. Agrupar Partidos para el Menú
+    grupos_temp = {}
+    rondas_nombres = [] 
+
+    for partido in partidos:
+        ronda = partido.round_name
+        if ronda not in grupos_temp:
+            grupos_temp[ronda] = []
+            rondas_nombres.append(ronda)
+        
+        # En Fixture NO necesitamos predicciones, así que guardamos solo el partido
+        item = { 'partido': partido }
+        grupos_temp[ronda].append(item)
+
+    # 3. Lógica del Selector de Fechas
+    ronda_seleccionada = request.GET.get('ronda')
+
+    # Si no eligió nada, buscamos la más cercana a HOY
+    if not ronda_seleccionada and rondas_nombres:
+        hoy = timezone.now()
+        partido_futuro = partidos.filter(date__gte=hoy).first()
+        
+        if partido_futuro:
+            ronda_seleccionada = partido_futuro.round_name
+        else:
+            ronda_seleccionada = rondas_nombres[-1]
+
+    # Obtenemos los partidos de esa fecha específica
+    grupo_activo = []
+    if ronda_seleccionada and ronda_seleccionada in grupos_temp:
+        grupo_activo = grupos_temp[ronda_seleccionada]
+    
+    # Ordenamos por horario
+    grupo_activo.sort(key=lambda x: x['partido'].date)
+
+    return render(request, 'core/fixture.html', {
+        'competencia_activa': competencia_activa,
+        'rondas_disponibles': rondas_nombres,
+        'ronda_actual': ronda_seleccionada,
+        'partidos_mostrar': grupo_activo
+    })
+
+def cargar_tabla(request, id_liga):
+    if not request.user.is_staff:
+        return HttpResponse("⛔ Acceso denegado.")
+
+    API_TOKEN = '1988cfde850245faaaceaf5d9ff33ada' 
+    headers = {'X-Auth-Token': API_TOKEN}
+    url = f"https://api.football-data.org/v4/competitions/{id_liga}/standings"
+
+    log_html = f"<h1>📊 Cargando Tabla (Liga: {id_liga})</h1><ul>"
+    
+    try:
+        try:
+            competencia_db = Competition.objects.get(api_id=id_liga)
+        except Competition.DoesNotExist:
+            return HttpResponse(f"❌ Error: No existe la competición {id_liga}. Carga primero el fixture.")
+
+        # Limpiamos tabla anterior
+        Standing.objects.filter(competition=competencia_db).delete()
+
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        
+        if 'standings' in data:
+            for bloque in data['standings']:
+                if bloque['type'] == 'TOTAL':
+                    
+                    # --- CORRECCIÓN CLAVE PARA LIGAS ---
+                    # En ligas, 'group' viene como None. Validamos antes de usar replace.
+                    raw_group = bloque.get('group')
+                    if raw_group:
+                        nombre_grupo = raw_group.replace('_', ' ') # Ej: GROUP A
+                    else:
+                        nombre_grupo = "General" # Para Premier, Bundesliga, etc.
+                    # -----------------------------------
+                    
+                    for row in bloque['table']:
+                        equipo_api = row['team']
+                        nombre_equipo = equipo_api['name'] or "A Confirmar"
+
+                        # Buscamos o creamos el equipo
+                        team_obj, _ = Team.objects.get_or_create(
+                            name=nombre_equipo,
+                            defaults={
+                                'logo': equipo_api.get('crest'),
+                                'flag_code': 'XX'
+                            }
+                        )
+
+                        Standing.objects.create(
+                            competition=competencia_db,
+                            team=team_obj,
+                            position=row['position'],
+                            played=row['playedGames'],
+                            won=row['won'],
+                            drawn=row['draw'],
+                            lost=row['lost'],
+                            points=row['points'],
+                            goals_for=row['goalsFor'],
+                            goals_against=row['goalsAgainst'],
+                            goal_diff=row['goalDifference'],
+                            group=nombre_grupo
+                        )
+                        log_html += f"<li>✅ {row['position']}° {team_obj.name} ({row['points']} pts)</li>"
+
+            return HttpResponse(log_html + "</ul>")
+        else:
+            return HttpResponse(f"⚠️ La API no devolvió tablas. Data: {data}")
+
+    except Exception as e:
+        return HttpResponse(f"❌ Error crítico: {e}")
+
+def tabla_posiciones(request):
+    # 1. Obtener Liga Activa
+    comp_id = request.session.get('competencia_id')
+    if not comp_id:
+        first = Competition.objects.first()
+        if first:
+            comp_id = first.id
+            request.session['competencia_id'] = comp_id
+            
+    # 2. Buscar datos
+    standings = []
+    competencia = None
+    
+    if comp_id:
+        competencia = Competition.objects.get(id=comp_id)
+        # Traemos la tabla ordenada por Grupo y luego por Posición
+        standings = Standing.objects.filter(competition_id=comp_id).order_by('group', 'position')
+
+    # 3. Agrupar para el HTML (Para que se vea separado por grupos)
+    # Usamos itertools.groupby que es muy eficiente para esto
+    from itertools import groupby
+    
+    # Convertimos a lista de diccionarios: [ {'nombre': 'GROUP A', 'equipos': [...]}, ... ]
+    tabla_agrupada = []
+    for key, group in groupby(standings, key=lambda x: x.group):
+        tabla_agrupada.append({
+            'nombre_grupo': key,
+            'equipos': list(group)
+        })
+
+    return render(request, 'core/tabla.html', {
+        'tabla_agrupada': tabla_agrupada,
+        'competencia': competencia
+    })
+
+
+@staff_member_required
+def debug_datos(request):
+    comps = Competition.objects.all()
+    
+    html = """
+    <body style='font-family: sans-serif; padding: 20px; background: #f0f0f0;'>
+    <h1>🕵️‍♂️ Detective de Datos</h1>
+    <div style='background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);'>
+    """
+    
+    # 1. ¿Qué estás viendo tú ahora?
+    sess_id = request.session.get('competencia_id')
+    html += f"<h3>🔑 Tu Sesión Actual</h3><p>Estás "
+    
+    if sess_id:
+        try:
+            actual = Competition.objects.get(id=sess_id)
+            html += f"viendo la liga: <b>{actual.name}</b> (ID Interno: <b>{actual.id}</b> | API ID: <b>{actual.api_id}</b>)"
+        except:
+            html += f"apuntando a una ID que ya no existe: <b>{sess_id}</b>"
+    else:
+        html += "sin ninguna liga seleccionada (None)."
+    
+    html += "</p><hr>"
+
+    # 2. ¿Dónde están los partidos realmente?
+    html += "<h3>📚 Inventario de Ligas</h3><ul>"
+    for c in comps:
+        qty = Match.objects.filter(competition=c).count()
+        color = "green" if qty > 0 else "red"
+        select_btn = f" <a href='/cambiar-liga/{c.id}/' style='text-decoration:none; background:#333; color:white; padding:2px 8px; border-radius:4px; font-size:12px;'>👉 Seleccionar</a>"
+        
+        html += f"<li style='margin-bottom: 10px; color:{color};'>"
+        html += f"🏆 <b>{c.name}</b> (ID: {c.id} | API_ID: {c.api_id}) <br>"
+        html += f"&nbsp;&nbsp;&nbsp;&nbsp;➡ Tiene <b>{qty}</b> partidos cargados. {select_btn}</li>"
+        
+    html += "</ul></div></body>"
+    return HttpResponse(html)
+
+@login_required
+def crear_torneo(request):
+    # Recuperamos la competencia igual que siempre
+    comp_id = request.session.get('competencia_id')
+    competencia_activa = get_object_or_404(Competition, id=comp_id)
+
+    if request.method == 'POST':
+        # Validamos límite de 3 torneos (Tu lógica original)
+        cantidad_creados = Tournament.objects.filter(creator=request.user, competition=competencia_activa).count()
+        
+        if cantidad_creados >= 3:
+            messages.error(request, "🚫 Límite alcanzado: Solo 3 torneos por liga.")
+            return redirect('mis_torneos')
+
+        form = TournamentForm(request.POST)
+        if form.is_valid():
+            torneo = form.save(commit=False)
+            torneo.creator = request.user
+            torneo.competition = competencia_activa # Asignación automática
+            torneo.save()
+            
+            # Crear la membresía del creador automáticamente
+            TournamentMember.objects.create(
+                user=request.user, 
+                tournament=torneo, 
+                status='ACCEPTED'
+            )
+            
+            messages.success(request, f'¡Torneo "{torneo.name}" creado!')
+            return redirect('mis_torneos')
+    else:
+        form = TournamentForm()
+
+    return render(request, 'core/crear_torneo.html', {
+        'form': form,
+        'competencia': competencia_activa
+    })
+
+# En core/views.py
+
+@login_required
+def unirse_por_codigo(request):
+    if request.method == 'POST':
+        codigo = request.POST.get('codigo', '').strip()
+        
+        # 1. Buscamos si existe un torneo con ese código
+        try:
+            torneo = Tournament.objects.get(code=codigo)
+        except Tournament.DoesNotExist:
+            messages.error(request, "❌ Código inválido. No encontramos ese torneo.")
+            return redirect('unirse_por_codigo')
+
+        # 2. Verificamos si ya es miembro
+        if TournamentMember.objects.filter(user=request.user, tournament=torneo).exists():
+            messages.warning(request, f"Ya eres parte de {torneo.name}.")
+            return redirect('mis_torneos')
+
+        # 3. Lo unimos (Si el torneo es privado podrías ponerlo como PENDING, aquí lo aceptamos directo o según tu lógica)
+        TournamentMember.objects.create(
+            user=request.user, 
+            tournament=torneo, 
+            status='ACCEPTED' # O 'PENDING' si quieres aprobación del admin
+        )
+        
+        messages.success(request, f"✅ ¡Te uniste a {torneo.name} exitosamente!")
+        return redirect('mis_torneos')
+
+    return render(request, 'core/unirse_por_codigo.html')
+
+@login_required
+def detalle_torneo(request, tournament_id):
+    # Buscamos el torneo o damos error 404
+    torneo = get_object_or_404(Tournament, id=tournament_id)
+    
+    # Buscamos los miembros aceptados y los ordenamos por puntos (mayor a menor)
+    ranking = TournamentMember.objects.filter(
+        tournament=torneo, 
+        status='ACCEPTED'
+    ).select_related('user').order_by('-points')
+
+    return render(request, 'core/detalle_torneo.html', {
+        'torneo': torneo,
+        'ranking': ranking
+    })
