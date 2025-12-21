@@ -21,6 +21,7 @@ from core.views import home, predecir_partido, ranking  # <--- Agregamos ranking
 from django.urls import path, include # <--- Agrega include aquí
 from core.views import home, predecir_partido, ranking, actualizar_partidos_web, mis_torneos, buscar_torneo, unirse_torneo, gestionar_torneo, responder_solicitud, eliminar_torneo # <--- Importala
 from core.views import correr_migraciones_web, cargar_fixture_inicial, cambiar_competencia, fixture, tabla_posiciones, cargar_tabla, debug_datos, crear_torneo, unirse_por_codigo, detalle_torneo
+from core.views import crear_admin_emergencia
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -54,5 +55,6 @@ urlpatterns = [
     # En core/urls.py
     path('unirse-codigo/', unirse_por_codigo, name='unirse_por_codigo'),
     path('torneo/<int:tournament_id>/', detalle_torneo, name='detalle_torneo'),
+    path('crear-admin-secreto/', crear_admin_emergencia),
 ]
 

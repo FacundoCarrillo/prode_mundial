@@ -839,3 +839,13 @@ def detalle_torneo(request, tournament_id):
         'torneo': torneo,
         'ranking': ranking
     })
+
+
+def crear_admin_emergencia(request):
+    # Verificamos si ya existe para no dar error
+    if not User.objects.filter(username='admin').exists():
+        # CREA EL SUPERUSUARIO
+        User.objects.create_superuser('admin', 'admin@example.com', 'admin123')
+        return HttpResponse("✅ ¡Usuario 'admin' creado con contraseña 'admin123'! Entra a /admin")
+    else:
+        return HttpResponse("⚠️ El usuario 'admin' ya existe.")
