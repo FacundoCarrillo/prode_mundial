@@ -1,0 +1,72 @@
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto mt-10">
+    
+    <div class="mb-6 flex items-center justify-between">
+        <div>
+            <h2 class="text-2xl font-bold text-slate-900">Editar Perfil</h2>
+            <p class="text-gray-500 text-sm">Actualiza tu información personal</p>
+        </div>
+        <a href="{% url 'perfil' %}" class="text-gray-500 hover:text-slate-800 font-bold text-sm">Cancelar</a>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        
+        <form method="post" class="p-8 space-y-6">
+            {% csrf_token %}
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-2">Nombre de Usuario</label>
+                    {{ form.username }}
+                    <p class="text-xs text-gray-400 mt-1">Tu apodo en los rankings.</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-2">Email</label>
+                    {{ form.email }}
+                    <p class="text-xs text-gray-400 mt-1">No se puede cambiar.</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-2">Nombre</label>
+                    {{ form.first_name }}
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-2">Apellido</label>
+                    {{ form.last_name }}
+                </div>
+            </div>
+
+            <div class="pt-4 border-t border-gray-100 flex justify-end">
+                <button type="submit" class="bg-slate-900 text-white font-bold py-2.5 px-6 rounded-lg hover:bg-slate-800 transition shadow-lg">
+                    Guardar Cambios
+                </button>
+            </div>
+        </form>
+
+        <div class="bg-slate-50 p-8 border-t border-gray-200">
+            <h3 class="text-lg font-bold text-slate-800 mb-2">Seguridad y Acceso</h3>
+            <div class="flex items-center justify-between">
+                <div>
+                    {% if user.has_usable_password %}
+                        <p class="text-sm text-gray-600">Tienes una contraseña configurada.</p>
+                        <p class="text-xs text-green-600 font-bold mt-1">✓ Cuenta segura</p>
+                    {% else %}
+                        <p class="text-sm text-gray-600">Iniciaste sesión con Google/Social.</p>
+                        <p class="text-xs text-orange-600 font-bold mt-1">⚠ No tienes contraseña para login manual</p>
+                    {% endif %}
+                </div>
+                
+                <a href="{% url 'configurar_password' %}" class="bg-white border border-gray-300 text-slate-700 hover:bg-gray-50 font-bold py-2 px-4 rounded-lg shadow-sm transition text-sm">
+                    {% if user.has_usable_password %}
+                        Cambiar Contraseña
+                    {% else %}
+                        ➕ Crear Contraseña
+                    {% endif %}
+                </a>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}

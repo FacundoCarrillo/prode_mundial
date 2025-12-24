@@ -11,11 +11,14 @@ import io
 from .forms import TournamentForm
 from django.db.models import Q
 from django.contrib import messages
-from django.db.models import Sum
 import requests
 from datetime import timedelta
 from itertools import groupby
 from operator import attrgetter
+from django.db.models import Sum, Count, Avg
+from django.contrib.auth import update_session_auth_hash
+from django.contrib.auth.forms import PasswordChangeForm, SetPasswordForm
+from .forms import EditarPerfilForm # Asegúrate de importar el form que acabamos de crear
 
 # En core/views.py
 
@@ -849,3 +852,84 @@ def crear_admin_emergencia(request):
         return HttpResponse("✅ ¡Usuario 'admin' creado con contraseña 'admin123'! Entra a /admin")
     else:
         return HttpResponse("⚠️ El usuario 'admin' ya existe.")
+    
+@login_required
+def perfil_usuario(request):
+    # 1. Estadísticas Globales
+    mis_preds = Prediction.objects.filter(user=request.user)
+    
+    total_pronosticos = mis_preds.count()
+    total_puntos = mis_preds.aggregate(Sum('points'))['points__sum'] or 0
+    
+    # Plenos (3 puntos) vs Tendencias (1 punto)
+    plenos = mis_preds.filter(points=3).count()
+    tendencias = mis_preds.filter(points=1).count()
+    fallos = mis_preds.filter(points=0).count() # Ojo: esto incluye partidos no jugados si se guardan con 0
+    
+    # Calcular efectividad real (Solo sobre partidos terminados)
+    # Filtramos partidos que YA se jugaron (status='FINISHED')
+    preds_terminadas = mis_preds.filter(match__status='FINISHED')
+    jugados_count = preds_terminadas.count()
+    
+    efectividad = 0
+    promedio = 0
+    if jugados_count > 0:
+        aciertos_totales = preds_terminadas.exclude(points=0).count()
+        efectividad = int((aciertos_totales / jugados_count) * 100)
+        promedio = round(total_puntos / jugados_count, 2)
+
+    context = {
+        'total_pronosticos': total_pronosticos,
+        'total_puntos': total_puntos,
+        'plenos': plenos,
+        'tendencias': tendencias,
+        'efectividad': efectividad,
+        'promedio': promedio,
+        'jugados_count': jugados_count
+    }
+    return render(request, 'core/perfil.html', context)
+
+@login_required
+def editar_perfil(request):
+    if request.method == 'POST':
+        form = EditarPerfilForm(request.POST, instance=request.user)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "✅ Tus datos han sido actualizados.")
+            return redirect('perfil')
+    else:
+        form = EditarPerfilForm(instance=request.user)
+    
+    return render(request, 'core/editar_perfil.html', {'form': form})
+
+# 2. VISTA: Gestionar Contraseña (La mágica ✨)
+@login_required
+def configurar_password(request):
+    # Si el usuario ya tiene contraseña (login normal), usamos PasswordChangeForm
+    # Si entró con Google (no tiene usable password), usamos SetPasswordForm
+    
+    if request.user.has_usable_password():
+        FormularioPassword = PasswordChangeForm
+        titulo = "Cambiar Contraseña"
+    else:
+        FormularioPassword = SetPasswordForm
+        titulo = "Crear Contraseña"
+
+    if request.method == 'POST':
+        form = FormularioPassword(request.user, request.POST)
+        if form.is_valid():
+            user = form.save()
+            # IMPORTANTE: Esto evita que se cierre la sesión al cambiar la clave
+            update_session_auth_hash(request, user) 
+            messages.success(request, "🔐 ¡Contraseña actualizada correctamente!")
+            return redirect('perfil')
+        else:
+            messages.error(request, "Por favor corrige los errores abajo.")
+    else:
+        form = FormularioPassword(request.user)
+
+    return render(request, 'core/password.html', {
+        'form': form, 
+        'titulo': titulo,
+        'tiene_pass': request.user.has_usable_password()
+    })

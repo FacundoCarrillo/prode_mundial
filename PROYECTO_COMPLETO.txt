@@ -409,7 +409,8 @@ from core.views import home, predecir_partido # <--- Importamos la nueva vista
 from core.views import home, predecir_partido, ranking  # <--- Agregamos ranking
 from django.urls import path, include # <--- Agrega include aquí
 from core.views import home, predecir_partido, ranking, actualizar_partidos_web, mis_torneos, buscar_torneo, unirse_torneo, gestionar_torneo, responder_solicitud, eliminar_torneo # <--- Importala
-from core.views import correr_migraciones_web, cargar_fixture_inicial, cambiar_competencia, fixture, tabla_posiciones
+from core.views import correr_migraciones_web, cargar_fixture_inicial, cambiar_competencia, fixture, tabla_posiciones, cargar_tabla, debug_datos, crear_torneo, unirse_por_codigo, detalle_torneo
+from core.views import crear_admin_emergencia, perfil_usuario, editar_perfil, configurar_password
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -433,10 +434,20 @@ urlpatterns = [
     path('solicitud/<int:member_id>/<str:accion>/', responder_solicitud, name='responder_solicitud'),
     path('torneo/<int:tournament_id>/eliminar/', eliminar_torneo, name='eliminar_torneo'),
     path('migrar-emergencia/', correr_migraciones_web),
-    path('cargar-fixture-magico/', cargar_fixture_inicial),
+    path('cargar-fixture/<int:id_liga>/', cargar_fixture_inicial, name='cargar_fixture'),
     path('cambiar-liga/<int:comp_id>/', cambiar_competencia, name='cambiar_competencia'),
     path('fixture/', fixture, name='fixture'),
     path('tabla/', tabla_posiciones, name='tabla'),
+    path('cargar-tabla/<int:id_liga>/', cargar_tabla, name='cargar_tabla'),
+    path('debug/', debug_datos, name='debug'),
+    path('crear-torneo/', crear_torneo, name='crear_torneo'),
+    # En core/urls.py
+    path('unirse-codigo/', unirse_por_codigo, name='unirse_por_codigo'),
+    path('torneo/<int:tournament_id>/', detalle_torneo, name='detalle_torneo'),
+    path('crear-admin-secreto/', crear_admin_emergencia),
+    path('perfil/', perfil_usuario, name='perfil'),
+    path('perfil/editar/', editar_perfil, name='editar_perfil'),
+    path('perfil/password/', configurar_password, name='configurar_password'),
 ]
 
 
@@ -547,6 +558,7 @@ def selector_competencias(request):
 ARCHIVO: .\core\forms.py
 ==================================================
 from django import forms
+from django.contrib.auth.models import User  # <--- IMPORTANTE: Agregamos esto
 from .models import Prediction, Tournament, Match
 
 class PredictionForm(forms.ModelForm):
@@ -587,8 +599,6 @@ class TournamentForm(forms.ModelForm):
             rondas = Match.objects.filter(competition=competition).values_list('round_name', flat=True).distinct().order_by('date')
             
             # Las convertimos en opciones para el select [(valor, texto), ...]
-            # Usamos un set para evitar duplicados si las fechas no están perfectamente ordenadas en DB,
-            # pero lo ideal es ordenarlas. Por simplicidad ahora:
             opciones = [('', 'Torneo Completo (Todas las fechas)')] + [(r, r) for r in rondas]
             
             self.fields['start_round'].choices = opciones
@@ -598,6 +608,22 @@ class TournamentForm(forms.ModelForm):
             style = 'w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-400 bg-white'
             self.fields['start_round'].widget.attrs['class'] = style
             self.fields['end_round'].widget.attrs['class'] = style
+
+# --- NUEVO FORMULARIO PARA EDITAR PERFIL ---
+class EditarPerfilForm(forms.ModelForm):
+    class Meta:
+        model = User
+        fields = ['username', 'email', 'first_name', 'last_name']
+        widgets = {
+            'username': forms.TextInput(attrs={'class': 'w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-slate-500 focus:border-slate-500'}),
+            'email': forms.EmailInput(attrs={'class': 'w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-slate-500 focus:border-slate-500 bg-gray-100 text-gray-500', 'readonly': 'readonly'}), 
+            'first_name': forms.TextInput(attrs={'class': 'w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-slate-500 focus:border-slate-500'}),
+            'last_name': forms.TextInput(attrs={'class': 'w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-slate-500 focus:border-slate-500'}),
+        }
+    
+    def clean_email(self):
+        # Evita que cambien el email (importante si usas Google Login)
+        return self.instance.email
 ==================================================
 ARCHIVO: .\core\models.py
 ==================================================
@@ -746,6 +772,29 @@ class TournamentMember(models.Model):
 
     def __str__(self):
         return f"{self.user.username} en {self.tournament.name} ({self.status})"
+    
+class Standing(models.Model):
+    competition = models.ForeignKey(Competition, on_delete=models.CASCADE, related_name='standings')
+    team = models.ForeignKey(Team, on_delete=models.CASCADE)
+    
+    position = models.IntegerField(default=0)
+    played = models.IntegerField(default=0)
+    won = models.IntegerField(default=0)
+    drawn = models.IntegerField(default=0)
+    lost = models.IntegerField(default=0)
+    points = models.IntegerField(default=0)
+    goals_for = models.IntegerField(default=0)
+    goals_against = models.IntegerField(default=0)
+    goal_diff = models.IntegerField(default=0)
+    
+    # Para Mundiales o Champions (Ej: "GROUP_A")
+    group = models.CharField(max_length=20, null=True, blank=True) 
+
+    class Meta:
+        ordering = ['group', 'position'] # Ordenar por grupo y posición
+
+    def __str__(self):
+        return f"{self.competition.name} - {self.team.name} ({self.points} pts)"
 ==================================================
 ARCHIVO: .\core\tests.py
 ==================================================
@@ -757,7 +806,7 @@ from django.test import TestCase
 ARCHIVO: .\core\views.py
 ==================================================
 from django.shortcuts import render, redirect, get_object_or_404
-from .models import Match, Prediction, Team, Tournament, TournamentMember, Competition
+from .models import Match, Prediction, Team, Tournament, TournamentMember, Competition, Standing
 from .forms import PredictionForm
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
@@ -769,38 +818,82 @@ import io
 from .forms import TournamentForm
 from django.db.models import Q
 from django.contrib import messages
-from django.db.models import Sum
 import requests
 from datetime import timedelta
 from itertools import groupby
 from operator import attrgetter
+from django.db.models import Sum, Count, Avg
+from django.contrib.auth import update_session_auth_hash
+from django.contrib.auth.forms import PasswordChangeForm, SetPasswordForm
+from .forms import EditarPerfilForm # Asegúrate de importar el form que acabamos de crear
 
+# En core/views.py
+
+@login_required
 def home(request):
-    # 1. Traemos todos los partidos
-    partidos = Match.objects.all()
+    # 1. Competencia Activa
+    comp_id = request.session.get('competencia_id')
+    if not comp_id:
+        first_comp = Competition.objects.first()
+        if first_comp:
+            comp_id = first_comp.id
+            request.session['competencia_id'] = comp_id
     
-    # 2. Preparamos un diccionario rápido de predicciones del usuario
-    predicciones_dict = {}
-    if request.user.is_authenticated:
-        predicciones = Prediction.objects.filter(user=request.user)
-        # Creamos un diccionario { id_partido: objeto_prediccion }
-        predicciones_dict = {p.match.id: p for p in predicciones}
+    competencia_activa = None
+    partidos = Match.objects.none()
+    
+    if comp_id:
+        competencia_activa = Competition.objects.get(id=comp_id)
+        # Filtramos por competencia para que no se mezclen
+        partidos = Match.objects.filter(competition_id=comp_id).order_by('date')
 
-    # 3. Armamos la lista FINAL combinada
-    lista_final = []
+    # 2. Agrupar Partidos para el Menú
+    grupos_temp = {}
+    rondas_nombres = [] 
+
     for partido in partidos:
-        # Buscamos si hay predicción para este partido (será None si no hay)
-        prediccion_usuario = predicciones_dict.get(partido.id)
+        ronda = partido.round_name
+        if ronda not in grupos_temp:
+            grupos_temp[ronda] = []
+            rondas_nombres.append(ronda)
         
-        # Guardamos todo junto en un paquetito
+        # Buscamos predicción del usuario
+        pred = Prediction.objects.filter(user=request.user, match=partido).first()
+        
         item = {
             'partido': partido,
-            'prediccion': prediccion_usuario
+            'prediccion': pred
         }
-        lista_final.append(item)
-            
-    # Enviamos 'lista_partidos' en lugar de las dos variables sueltas
-    return render(request, 'core/home.html', {'lista_partidos': lista_final})
+        grupos_temp[ronda].append(item)
+
+    # 3. Lógica del Selector de Fechas
+    ronda_seleccionada = request.GET.get('ronda')
+
+    # Si no eligió nada, buscamos la más cercana a HOY
+    if not ronda_seleccionada and rondas_nombres:
+        hoy = timezone.now()
+        partido_futuro = partidos.filter(date__gte=hoy).first()
+        
+        if partido_futuro:
+            ronda_seleccionada = partido_futuro.round_name
+        else:
+            # Si ya terminó todo, mostramos la última fecha
+            ronda_seleccionada = rondas_nombres[-1]
+
+    # Obtenemos los partidos de esa fecha específica
+    grupo_activo = []
+    if ronda_seleccionada and ronda_seleccionada in grupos_temp:
+        grupo_activo = grupos_temp[ronda_seleccionada]
+    
+    # Ordenamos por horario
+    grupo_activo.sort(key=lambda x: x['partido'].date)
+
+    return render(request, 'core/home.html', {
+        'competencia_activa': competencia_activa,
+        'rondas_disponibles': rondas_nombres,   # <--- Esto llena el menú
+        'ronda_actual': ronda_seleccionada,     # <--- Esto marca la opción
+        'partidos_mostrar': grupo_activo        # <--- Esto llena la lista
+    })
 
 @login_required # ¡Ojo! Solo usuarios logueados pueden predecir
 def predecir_partido(request, match_id):
@@ -828,7 +921,14 @@ def predecir_partido(request, match_id):
             prediccion.user = request.user
             prediccion.match = partido
             prediccion.save() # ¡Ahora sí guardamos!
-            return redirect('home') # Lo mandamos al inicio
+            # --- CAMBIO AQUÍ: REDIRECCIÓN INTELIGENTE ---
+            # 1. Obtenemos el nombre de la ronda (Ej: "Fecha 16")
+            ronda = partido.round_name
+            
+            # 2. Armamos la URL para que abra esa ronda y baje hasta el partido
+            # El signo # hace que el navegador baje hasta el ID del partido
+            return redirect(f"/?ronda={ronda}#group-{ronda}")
+            # --------------------------------------------# Lo mandamos al inicio
     else:
         # Si solo está visitando la página, mostramos el form (vacío o con datos previos)
         form = PredictionForm(instance=prediccion_existente)
@@ -891,7 +991,7 @@ def actualizar_partidos_web(request):
         return redirect('home')
 
     # --- TU TOKEN REAL AQUÍ ---
-    API_TOKEN = '1988cfde850245faaaceaf5d9ff33ada' # <--- REVISA QUE ESTÉ TU TOKEN PUESTO
+    API_TOKEN = '1988cfde850245faaaceaf5d9ff33ada' 
     # --------------------------
     
     base_url = "https://api.football-data.org/v4/matches"
@@ -907,7 +1007,7 @@ def actualizar_partidos_web(request):
         'dateTo': manana.strftime('%Y-%m-%d')
     }
 
-    reporte = [] # <--- Lista para guardar lo que vemos
+    reporte = [] 
 
     try:
         response = requests.get(base_url, headers=headers, params=params)
@@ -938,42 +1038,52 @@ def actualizar_partidos_web(request):
                 if partido_db:
                     info_partido['accion'] = '✅ Actualizado'
                     
-                    # Actualizar datos
+                    # 1. ACTUALIZAR DATOS BÁSICOS
                     if goles_local is not None:
                         partido_db.home_goals = goles_local
                         partido_db.away_goals = goles_visitante
                     
                     partido_db.date = item['utcDate']
+                    partido_db.status = estado # Guardamos el estado (FINISHED, TIMED, etc)
                     partido_db.save()
 
-                    # Calcular Puntos
-                    preds = Prediction.objects.filter(match=partido_db)
-                    puntos_repartidos = 0
-                    
-                    for pred in preds:
-                        pts = 0
-                        if pred.predicted_home == goles_local and pred.predicted_away == goles_visitante:
-                            pts = 3
-                        else:
-                            # Lógica simple de ganador
-                            winner_real = "H" if goles_local > goles_visitante else "A" if goles_visitante > goles_local else "D"
-                            winner_pred = "H" if pred.predicted_home > pred.predicted_away else "A" if pred.predicted_away > pred.predicted_home else "D"
-                            if winner_real == winner_pred:
-                                pts = 1
+                    # 2. CALCULAR PUNTOS (🔥 CORRECCIÓN AQUÍ 🔥)
+                    # Solo entramos a calcular si EFECTIVAMENTE hay goles cargados
+                    if goles_local is not None and goles_visitante is not None:
                         
-                        if pred.points != pts:
-                            pred.points = pts
-                            pred.save()
-                            puntos_repartidos += 1
+                        preds = Prediction.objects.filter(match=partido_db)
+                        puntos_repartidos = 0
+                        
+                        # Calculamos ganador real (Ahora es seguro porque no son None)
+                        winner_real = "H" if goles_local > goles_visitante else "A" if goles_visitante > goles_local else "D"
+                        
+                        for pred in preds:
+                            pts = 0
+                            # A. Acierto Exacto (3 pts)
+                            if pred.predicted_home == goles_local and pred.predicted_away == goles_visitante:
+                                pts = 3
+                            else:
+                                # B. Acierto de Tendencia (1 pt)
+                                winner_pred = "H" if pred.predicted_home > pred.predicted_away else "A" if pred.predicted_away > pred.predicted_home else "D"
+                                
+                                if winner_real == winner_pred:
+                                    pts = 1
                             
-                    if puntos_repartidos > 0:
-                        info_partido['accion'] += f" y Puntos Recalculados ({puntos_repartidos} preds)"
+                            # Guardar solo si cambió el puntaje
+                            if pred.points != pts:
+                                pred.points = pts
+                                pred.save()
+                                puntos_repartidos += 1
+                                
+                        if puntos_repartidos > 0:
+                            info_partido['accion'] += f" y Puntos Recalculados ({puntos_repartidos} preds)"
 
                 reporte.append(info_partido)
 
-            # Recalcular Torneos Globalmente
+            # 3. RECALCULAR PUNTAJES TOTALES DE LOS TORNEOS
             miembros = TournamentMember.objects.filter(status='ACCEPTED')
             for m in miembros:
+                # Sumamos todos los puntos de las predicciones de este usuario
                 total = Prediction.objects.filter(user=m.user).aggregate(Sum('points'))['points__sum'] or 0
                 if m.points != total:
                     m.points = total
@@ -983,77 +1093,56 @@ def actualizar_partidos_web(request):
             messages.warning(request, "La API respondió OK pero sin partidos.")
 
     except Exception as e:
+        print(f"ERROR EN UPDATE: {e}") # Para ver en la consola negra
         messages.error(request, f"Error: {e}")
         return redirect('mis_torneos')
 
-    # EN LUGAR DE REDIRIGIR, MOSTRAMOS EL REPORTE
     return render(request, 'core/actualizar_resultados.html', {'reporte': reporte})
     
 @login_required
 def mis_torneos(request):
-    # 1. Recuperamos la liga activa de la sesión (o una por defecto)
+    # --- 1. LÓGICA DE COMPETENCIA (Tu código original) ---
     comp_id = request.session.get('competencia_id')
-    
-    # IMPORTANTE: Si es la primera vez y no hay nada en sesión, tomamos la primera liga que exista
     if not comp_id:
         primera = Competition.objects.first()
         if primera:
             comp_id = primera.id
             request.session['competencia_id'] = comp_id
             
-    competencia_activa = get_object_or_404(Competition, id=comp_id)
+    # Manejo seguro si no hay competencias
+    competencia_activa = None
+    if comp_id:
+        competencia_activa = get_object_or_404(Competition, id=comp_id)
 
-    # 2. Filtramos SOLO los torneos de esta liga
-    jugando = TournamentMember.objects.filter(
+    # --- 2. FILTRADO (Tu código + Adaptación al nuevo diseño) ---
+    
+    # Usamos 'mis_torneos' en el return para coincidir con el HTML nuevo
+    mis_torneos_list = TournamentMember.objects.filter(
         user=request.user, 
         status='ACCEPTED',
-        tournament__competition=competencia_activa # <--- FILTRO MAGICO
-    ).select_related('tournament')
+        tournament__competition=competencia_activa # <--- ¡MANTENEMOS EL FILTRO!
+    ).select_related('tournament').order_by('-joined_at')
 
-    pendientes = TournamentMember.objects.filter(
+    pendientes_list = TournamentMember.objects.filter(
         user=request.user, 
         status='PENDING',
-        tournament__competition=competencia_activa # <--- FILTRO MAGICO
-    ).select_related('tournament')
+        tournament__competition=competencia_activa # <--- ¡MANTENEMOS EL FILTRO!
+    ).select_related('tournament').order_by('-joined_at')
 
-    if request.method == 'POST':
-        cantidad_creados = Tournament.objects.filter(creator=request.user, competition=competencia_activa).count()
-        
-        # Pasamos la competencia al formulario para que llene los dropdowns
-        form = TournamentForm(request.POST, competition=competencia_activa) 
-
-        if cantidad_creados >= 3:
-            messages.error(request, "🚫 Límite alcanzado: Solo 3 torneos por liga.")
-        else:
-            if form.is_valid():
-                torneo = form.save(commit=False)
-                torneo.creator = request.user
-                torneo.competition = competencia_activa # <--- ASIGNAMOS LA LIGA AUTOMÁTICAMENTE
-                torneo.save()
-                
-                TournamentMember.objects.create(
-                    user=request.user, 
-                    tournament=torneo, 
-                    status='ACCEPTED'
-                )
-                messages.success(request, f'¡Torneo "{torneo.name}" creado en {competencia_activa.name}!')
-                return redirect('mis_torneos')
-    else:
-        # Pasamos la competencia al formulario vacío también
-        form = TournamentForm(competition=competencia_activa)
+    # Nota: Ya no procesamos el formulario aquí porque el botón "Crear"
+    # del nuevo diseño lleva a una vista dedicada ('crear_torneo').
 
     return render(request, 'core/mis_torneos.html', {
-        'jugando': jugando,
-        'pendientes': pendientes,
-        'form': form,
-        'competencia': competencia_activa
+        'mis_torneos': mis_torneos_list, 
+        'pendientes': pendientes_list,
+        'competencia_activa': competencia_activa
     })
 
 @login_required
 def buscar_torneo(request):
     query = request.GET.get('q')
     resultados = []
-    
+
     if query:
         # Buscamos por Nombre o por Código exacto
         resultados = Tournament.objects.filter(
@@ -1157,80 +1246,99 @@ def correr_migraciones_web(request):
     
 # --- AGREGAR AL FINAL DE core/views.py ---
 
-def cargar_fixture_inicial(request):
+# Asegúrate de tener estos imports arriba en views.py:
+# from .models import Match, Team, Competition  <-- IMPORTANTE AGREGAR Competition
+# import requests
+
+# En core/views.py
+
+def cargar_fixture_inicial(request, id_liga): # <--- AHORA RECIBE EL ID
     if not request.user.is_staff:
         return HttpResponse("⛔ Acceso denegado.")
 
     API_TOKEN = '1988cfde850245faaaceaf5d9ff33ada' 
-    COMPETITION_ID = '2021' 
+    
+    # YA NO ESTÁ FIJO. Usamos el que viene de la URL
+    COMPETITION_ID_API = id_liga 
     
     headers = {'X-Auth-Token': API_TOKEN}
-    url = f"https://api.football-data.org/v4/competitions/{COMPETITION_ID}/matches"
+    url = f"https://api.football-data.org/v4/competitions/{COMPETITION_ID_API}/matches"
 
-    log_html = "<h1>📝 Reporte de Carga</h1><ul>"
+    log_html = f"<h1>📝 Reporte de Carga (Liga ID: {id_liga})</h1><ul>"
     actualizados = 0
     nuevos = 0
 
     try:
+        try:
+            competencia_db = Competition.objects.get(api_id=COMPETITION_ID_API)
+        except Competition.DoesNotExist:
+            return HttpResponse(f"❌ Error: No existe la competición con ID {COMPETITION_ID_API} en tu base de datos. <br>Ve al Admin y créala primero.")
+
         response = requests.get(url, headers=headers)
         data = response.json()
         
         if 'matches' in data:
             for item in data['matches']:
-                # 1. Equipos (Igual que antes)
+                
+                # LOGICA UNIVERSAL (Sirve para Mundial, Premier, etc.)
+                nombre_local = item['homeTeam']['name'] or "A Confirmar"
+                nombre_visitante = item['awayTeam']['name'] or "A Confirmar"
+                flag_local = item['homeTeam'].get('tla') or 'XX'
+                flag_visitante = item['awayTeam'].get('tla') or 'XX'
+
+                # 1. Equipos
                 equipo_local, _ = Team.objects.get_or_create(
-                    name=item['homeTeam']['name'],
-                    defaults={'logo': item['homeTeam']['crest'], 'flag_code': item['homeTeam'].get('tla', 'XX')}
+                    name=nombre_local, 
+                    defaults={'logo': item['homeTeam'].get('crest'), 'flag_code': flag_local}
                 )
                 equipo_visitante, _ = Team.objects.get_or_create(
-                    name=item['awayTeam']['name'],
-                    defaults={'logo': item['awayTeam']['crest'], 'flag_code': item['awayTeam'].get('tla', 'XX')}
+                    name=nombre_visitante, 
+                    defaults={'logo': item['awayTeam'].get('crest'), 'flag_code': flag_visitante}
                 )
 
-                # 2. Datos del partido
+                # 2. Datos
                 fecha = item['utcDate']
                 estado = item['status']
                 gol_local = item['score']['fullTime']['home']
                 gol_visitante = item['score']['fullTime']['away']
+                
+                ronda_api = item.get('matchday')
+                nombre_ronda = f"Fecha {ronda_api}" if ronda_api else item.get('stage', 'General').replace('_', ' ').title()
 
-                # 3. BUSQUEDA MANUAL Y ACTUALIZACIÓN FORZADA
-                # Buscamos el partido por equipos (ignoramos fecha exacta por si cambió la hora)
+                # 3. Guardar
                 partido = Match.objects.filter(
+                    competition=competencia_db, 
                     home_team=equipo_local, 
                     away_team=equipo_visitante
                 ).first()
 
                 if partido:
-                    # SI YA EXISTE: Lo actualizamos a la fuerza
                     cambios = []
                     if partido.status != estado:
                         partido.status = estado
                         cambios.append("Estado")
-                    
                     if partido.home_goals != gol_local:
                         partido.home_goals = gol_local
                         partido.away_goals = gol_visitante
-                        cambios.append(f"Goles ({gol_local}-{gol_visitante})")
+                        cambios.append("Goles")
                     
                     if cambios:
                         partido.save()
                         actualizados += 1
-                        log_html += f"<li>✅ <b>{equipo_local} vs {equipo_visitante}</b>: Actualizado ({', '.join(cambios)})</li>"
-                    else:
-                        # Si no hubo cambios, no hacemos nada (pero sabemos que lo vimos)
-                        pass
+                        log_html += f"<li>✅ <b>{equipo_local} vs {equipo_visitante}</b>: Actualizado</li>"
                 else:
-                    # SI NO EXISTE: Lo creamos
                     Match.objects.create(
+                        competition=competencia_db,
                         home_team=equipo_local,
                         away_team=equipo_visitante,
                         date=fecha,
                         status=estado,
+                        round_name=nombre_ronda,
                         home_goals=gol_local,
                         away_goals=gol_visitante
                     )
                     nuevos += 1
-                    log_html += f"<li>🆕 <b>{equipo_local} vs {equipo_visitante}</b>: Creado Nuevo</li>"
+                    log_html += f"<li>🆕 <b>{equipo_local} vs {equipo_visitante}</b>: Creado</li>"
 
             log_html += f"</ul><h2>Resumen: {nuevos} Nuevos, {actualizados} Actualizados.</h2>"
             return HttpResponse(log_html)
@@ -1239,7 +1347,7 @@ def cargar_fixture_inicial(request):
             return HttpResponse(f"⚠️ La API respondió sin partidos. Data: {data}")
 
     except Exception as e:
-        return HttpResponse(f"❌ Error: {e}")
+        return HttpResponse(f"❌ Error crítico: {e}")
     
 def cambiar_competencia(request, comp_id):
     # Guardamos la elección en la "memoria" del navegador (Sesión)
@@ -1250,72 +1358,388 @@ def cambiar_competencia(request, comp_id):
 
 # En core/views.py
 
+# En core/views.py
+
 def fixture(request):
-    return render(request, 'core/home.html') # Por ahora reusamos home
-
-def tabla_posiciones(request):
-    return render(request, 'core/home.html') # Por ahora reusamos home
-
-def home(request):
-    # 1. Obtener Competencia Activa
+    # 1. Competencia Activa
     comp_id = request.session.get('competencia_id')
     if not comp_id:
-        # Fallback si no hay sesión
         first_comp = Competition.objects.first()
         if first_comp:
             comp_id = first_comp.id
             request.session['competencia_id'] = comp_id
     
-    # 2. Filtrar partidos SOLO de esa competencia
+    competencia_activa = None
+    partidos = Match.objects.none()
+    
     if comp_id:
-        # Ordenamos por fecha para que el groupby funcione bien y para mostrar ordenado
+        competencia_activa = Competition.objects.get(id=comp_id)
+        # Filtramos por competencia
         partidos = Match.objects.filter(competition_id=comp_id).order_by('date')
-    else:
-        partidos = Match.objects.none()
 
-    # 3. Predicciones del usuario
-    predicciones_dict = {}
-    if request.user.is_authenticated:
-        predicciones = Prediction.objects.filter(user=request.user)
-        predicciones_dict = {p.match.id: p for p in predicciones}
+    # 2. Agrupar Partidos para el Menú
+    grupos_temp = {}
+    rondas_nombres = [] 
 
-    # 4. Agrupar por Ronda (Fecha 1, Fecha 2...)
-    # Usamos una lista de diccionarios para mandarlo fácil al template
-    fixture_agrupado = []
-    
-    # groupby necesita que la lista esté ordenada por la clave de agrupación, 
-    # pero ya ordenamos por fecha, asumimos que las rondas siguen un orden temporal.
-    # Si las rondas están desordenadas (ej: Fecha 2 antes que Fecha 1 en tiempo), mejor agrupar por nombre.
-    
-    # Truco: Ordenamos por 'round_name' para agrupar, o confiamos en 'date'. 
-    # Vamos a confiar en 'date' para el orden visual, pero agruparemos manualmente para asegurar.
-    
-    grupos_temp = {} # { "Fecha 1": [match1, match2], "Fecha 2": ... }
-    
     for partido in partidos:
         ronda = partido.round_name
         if ronda not in grupos_temp:
             grupos_temp[ronda] = []
+            rondas_nombres.append(ronda)
         
-        # Empaquetamos partido + prediccion
-        item = {
-            'partido': partido,
-            'prediccion': predicciones_dict.get(partido.id)
-        }
+        # En Fixture NO necesitamos predicciones, así que guardamos solo el partido
+        item = { 'partido': partido }
         grupos_temp[ronda].append(item)
 
-    # Convertimos a lista para el template
-    for nombre_ronda, items in grupos_temp.items():
-        fixture_agrupado.append({
-            'nombre': nombre_ronda,
-            'partidos': items,
-            'fecha_ref': items[0]['partido'].date # Para ordenar los grupos por fecha del primer partido
-        })
-    
-    # Ordenamos los grupos cronológicamente
-    fixture_agrupado.sort(key=lambda x: x['fecha_ref'])
+    # 3. Lógica del Selector de Fechas
+    ronda_seleccionada = request.GET.get('ronda')
 
-    return render(request, 'core/home.html', {'fixture_agrupado': fixture_agrupado})
+    # Si no eligió nada, buscamos la más cercana a HOY
+    if not ronda_seleccionada and rondas_nombres:
+        hoy = timezone.now()
+        partido_futuro = partidos.filter(date__gte=hoy).first()
+        
+        if partido_futuro:
+            ronda_seleccionada = partido_futuro.round_name
+        else:
+            ronda_seleccionada = rondas_nombres[-1]
+
+    # Obtenemos los partidos de esa fecha específica
+    grupo_activo = []
+    if ronda_seleccionada and ronda_seleccionada in grupos_temp:
+        grupo_activo = grupos_temp[ronda_seleccionada]
+    
+    # Ordenamos por horario
+    grupo_activo.sort(key=lambda x: x['partido'].date)
+
+    return render(request, 'core/fixture.html', {
+        'competencia_activa': competencia_activa,
+        'rondas_disponibles': rondas_nombres,
+        'ronda_actual': ronda_seleccionada,
+        'partidos_mostrar': grupo_activo
+    })
+
+def cargar_tabla(request, id_liga):
+    if not request.user.is_staff:
+        return HttpResponse("⛔ Acceso denegado.")
+
+    API_TOKEN = '1988cfde850245faaaceaf5d9ff33ada' 
+    headers = {'X-Auth-Token': API_TOKEN}
+    url = f"https://api.football-data.org/v4/competitions/{id_liga}/standings"
+
+    log_html = f"<h1>📊 Cargando Tabla (Liga: {id_liga})</h1><ul>"
+    
+    try:
+        try:
+            competencia_db = Competition.objects.get(api_id=id_liga)
+        except Competition.DoesNotExist:
+            return HttpResponse(f"❌ Error: No existe la competición {id_liga}. Carga primero el fixture.")
+
+        # Limpiamos tabla anterior
+        Standing.objects.filter(competition=competencia_db).delete()
+
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        
+        if 'standings' in data:
+            for bloque in data['standings']:
+                if bloque['type'] == 'TOTAL':
+                    
+                    # --- CORRECCIÓN CLAVE PARA LIGAS ---
+                    # En ligas, 'group' viene como None. Validamos antes de usar replace.
+                    raw_group = bloque.get('group')
+                    if raw_group:
+                        nombre_grupo = raw_group.replace('_', ' ') # Ej: GROUP A
+                    else:
+                        nombre_grupo = "General" # Para Premier, Bundesliga, etc.
+                    # -----------------------------------
+                    
+                    for row in bloque['table']:
+                        equipo_api = row['team']
+                        nombre_equipo = equipo_api['name'] or "A Confirmar"
+
+                        # Buscamos o creamos el equipo
+                        team_obj, _ = Team.objects.get_or_create(
+                            name=nombre_equipo,
+                            defaults={
+                                'logo': equipo_api.get('crest'),
+                                'flag_code': 'XX'
+                            }
+                        )
+
+                        Standing.objects.create(
+                            competition=competencia_db,
+                            team=team_obj,
+                            position=row['position'],
+                            played=row['playedGames'],
+                            won=row['won'],
+                            drawn=row['draw'],
+                            lost=row['lost'],
+                            points=row['points'],
+                            goals_for=row['goalsFor'],
+                            goals_against=row['goalsAgainst'],
+                            goal_diff=row['goalDifference'],
+                            group=nombre_grupo
+                        )
+                        log_html += f"<li>✅ {row['position']}° {team_obj.name} ({row['points']} pts)</li>"
+
+            return HttpResponse(log_html + "</ul>")
+        else:
+            return HttpResponse(f"⚠️ La API no devolvió tablas. Data: {data}")
+
+    except Exception as e:
+        return HttpResponse(f"❌ Error crítico: {e}")
+
+def tabla_posiciones(request):
+    # 1. Obtener Liga Activa
+    comp_id = request.session.get('competencia_id')
+    if not comp_id:
+        first = Competition.objects.first()
+        if first:
+            comp_id = first.id
+            request.session['competencia_id'] = comp_id
+            
+    # 2. Buscar datos
+    standings = []
+    competencia = None
+    
+    if comp_id:
+        competencia = Competition.objects.get(id=comp_id)
+        # Traemos la tabla ordenada por Grupo y luego por Posición
+        standings = Standing.objects.filter(competition_id=comp_id).order_by('group', 'position')
+
+    # 3. Agrupar para el HTML (Para que se vea separado por grupos)
+    # Usamos itertools.groupby que es muy eficiente para esto
+    from itertools import groupby
+    
+    # Convertimos a lista de diccionarios: [ {'nombre': 'GROUP A', 'equipos': [...]}, ... ]
+    tabla_agrupada = []
+    for key, group in groupby(standings, key=lambda x: x.group):
+        tabla_agrupada.append({
+            'nombre_grupo': key,
+            'equipos': list(group)
+        })
+
+    return render(request, 'core/tabla.html', {
+        'tabla_agrupada': tabla_agrupada,
+        'competencia': competencia
+    })
+
+
+@staff_member_required
+def debug_datos(request):
+    comps = Competition.objects.all()
+    
+    html = """
+    <body style='font-family: sans-serif; padding: 20px; background: #f0f0f0;'>
+    <h1>🕵️‍♂️ Detective de Datos</h1>
+    <div style='background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);'>
+    """
+    
+    # 1. ¿Qué estás viendo tú ahora?
+    sess_id = request.session.get('competencia_id')
+    html += f"<h3>🔑 Tu Sesión Actual</h3><p>Estás "
+    
+    if sess_id:
+        try:
+            actual = Competition.objects.get(id=sess_id)
+            html += f"viendo la liga: <b>{actual.name}</b> (ID Interno: <b>{actual.id}</b> | API ID: <b>{actual.api_id}</b>)"
+        except:
+            html += f"apuntando a una ID que ya no existe: <b>{sess_id}</b>"
+    else:
+        html += "sin ninguna liga seleccionada (None)."
+    
+    html += "</p><hr>"
+
+    # 2. ¿Dónde están los partidos realmente?
+    html += "<h3>📚 Inventario de Ligas</h3><ul>"
+    for c in comps:
+        qty = Match.objects.filter(competition=c).count()
+        color = "green" if qty > 0 else "red"
+        select_btn = f" <a href='/cambiar-liga/{c.id}/' style='text-decoration:none; background:#333; color:white; padding:2px 8px; border-radius:4px; font-size:12px;'>👉 Seleccionar</a>"
+        
+        html += f"<li style='margin-bottom: 10px; color:{color};'>"
+        html += f"🏆 <b>{c.name}</b> (ID: {c.id} | API_ID: {c.api_id}) <br>"
+        html += f"&nbsp;&nbsp;&nbsp;&nbsp;➡ Tiene <b>{qty}</b> partidos cargados. {select_btn}</li>"
+        
+    html += "</ul></div></body>"
+    return HttpResponse(html)
+
+@login_required
+def crear_torneo(request):
+    # Recuperamos la competencia igual que siempre
+    comp_id = request.session.get('competencia_id')
+    competencia_activa = get_object_or_404(Competition, id=comp_id)
+
+    if request.method == 'POST':
+        # Validamos límite de 3 torneos (Tu lógica original)
+        cantidad_creados = Tournament.objects.filter(creator=request.user, competition=competencia_activa).count()
+        
+        if cantidad_creados >= 3:
+            messages.error(request, "🚫 Límite alcanzado: Solo 3 torneos por liga.")
+            return redirect('mis_torneos')
+
+        form = TournamentForm(request.POST)
+        if form.is_valid():
+            torneo = form.save(commit=False)
+            torneo.creator = request.user
+            torneo.competition = competencia_activa # Asignación automática
+            torneo.save()
+            
+            # Crear la membresía del creador automáticamente
+            TournamentMember.objects.create(
+                user=request.user, 
+                tournament=torneo, 
+                status='ACCEPTED'
+            )
+            
+            messages.success(request, f'¡Torneo "{torneo.name}" creado!')
+            return redirect('mis_torneos')
+    else:
+        form = TournamentForm()
+
+    return render(request, 'core/crear_torneo.html', {
+        'form': form,
+        'competencia': competencia_activa
+    })
+
+# En core/views.py
+
+@login_required
+def unirse_por_codigo(request):
+    if request.method == 'POST':
+        codigo = request.POST.get('codigo', '').strip()
+        
+        # 1. Buscamos si existe un torneo con ese código
+        try:
+            torneo = Tournament.objects.get(code=codigo)
+        except Tournament.DoesNotExist:
+            messages.error(request, "❌ Código inválido. No encontramos ese torneo.")
+            return redirect('unirse_por_codigo')
+
+        # 2. Verificamos si ya es miembro
+        if TournamentMember.objects.filter(user=request.user, tournament=torneo).exists():
+            messages.warning(request, f"Ya eres parte de {torneo.name}.")
+            return redirect('mis_torneos')
+
+        # 3. Lo unimos (Si el torneo es privado podrías ponerlo como PENDING, aquí lo aceptamos directo o según tu lógica)
+        TournamentMember.objects.create(
+            user=request.user, 
+            tournament=torneo, 
+            status='ACCEPTED' # O 'PENDING' si quieres aprobación del admin
+        )
+        
+        messages.success(request, f"✅ ¡Te uniste a {torneo.name} exitosamente!")
+        return redirect('mis_torneos')
+
+    return render(request, 'core/unirse_por_codigo.html')
+
+@login_required
+def detalle_torneo(request, tournament_id):
+    # Buscamos el torneo o damos error 404
+    torneo = get_object_or_404(Tournament, id=tournament_id)
+    
+    # Buscamos los miembros aceptados y los ordenamos por puntos (mayor a menor)
+    ranking = TournamentMember.objects.filter(
+        tournament=torneo, 
+        status='ACCEPTED'
+    ).select_related('user').order_by('-points')
+
+    return render(request, 'core/detalle_torneo.html', {
+        'torneo': torneo,
+        'ranking': ranking
+    })
+
+
+def crear_admin_emergencia(request):
+    # Verificamos si ya existe para no dar error
+    if not User.objects.filter(username='admin').exists():
+        # CREA EL SUPERUSUARIO
+        User.objects.create_superuser('admin', 'admin@example.com', 'admin123')
+        return HttpResponse("✅ ¡Usuario 'admin' creado con contraseña 'admin123'! Entra a /admin")
+    else:
+        return HttpResponse("⚠️ El usuario 'admin' ya existe.")
+    
+@login_required
+def perfil_usuario(request):
+    # 1. Estadísticas Globales
+    mis_preds = Prediction.objects.filter(user=request.user)
+    
+    total_pronosticos = mis_preds.count()
+    total_puntos = mis_preds.aggregate(Sum('points'))['points__sum'] or 0
+    
+    # Plenos (3 puntos) vs Tendencias (1 punto)
+    plenos = mis_preds.filter(points=3).count()
+    tendencias = mis_preds.filter(points=1).count()
+    fallos = mis_preds.filter(points=0).count() # Ojo: esto incluye partidos no jugados si se guardan con 0
+    
+    # Calcular efectividad real (Solo sobre partidos terminados)
+    # Filtramos partidos que YA se jugaron (status='FINISHED')
+    preds_terminadas = mis_preds.filter(match__status='FINISHED')
+    jugados_count = preds_terminadas.count()
+    
+    efectividad = 0
+    promedio = 0
+    if jugados_count > 0:
+        aciertos_totales = preds_terminadas.exclude(points=0).count()
+        efectividad = int((aciertos_totales / jugados_count) * 100)
+        promedio = round(total_puntos / jugados_count, 2)
+
+    context = {
+        'total_pronosticos': total_pronosticos,
+        'total_puntos': total_puntos,
+        'plenos': plenos,
+        'tendencias': tendencias,
+        'efectividad': efectividad,
+        'promedio': promedio,
+        'jugados_count': jugados_count
+    }
+    return render(request, 'core/perfil.html', context)
+
+@login_required
+def editar_perfil(request):
+    if request.method == 'POST':
+        form = EditarPerfilForm(request.POST, instance=request.user)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "✅ Tus datos han sido actualizados.")
+            return redirect('perfil')
+    else:
+        form = EditarPerfilForm(instance=request.user)
+    
+    return render(request, 'core/editar_perfil.html', {'form': form})
+
+# 2. VISTA: Gestionar Contraseña (La mágica ✨)
+@login_required
+def configurar_password(request):
+    # Si el usuario ya tiene contraseña (login normal), usamos PasswordChangeForm
+    # Si entró con Google (no tiene usable password), usamos SetPasswordForm
+    
+    if request.user.has_usable_password():
+        FormularioPassword = PasswordChangeForm
+        titulo = "Cambiar Contraseña"
+    else:
+        FormularioPassword = SetPasswordForm
+        titulo = "Crear Contraseña"
+
+    if request.method == 'POST':
+        form = FormularioPassword(request.user, request.POST)
+        if form.is_valid():
+            user = form.save()
+            # IMPORTANTE: Esto evita que se cierre la sesión al cambiar la clave
+            update_session_auth_hash(request, user) 
+            messages.success(request, "🔐 ¡Contraseña actualizada correctamente!")
+            return redirect('perfil')
+        else:
+            messages.error(request, "Por favor corrige los errores abajo.")
+    else:
+        form = FormularioPassword(request.user)
+
+    return render(request, 'core/password.html', {
+        'form': form, 
+        'titulo': titulo,
+        'tiene_pass': request.user.has_usable_password()
+    })
 ==================================================
 ARCHIVO: .\core\__init__.py
 ==================================================
@@ -1664,6 +2088,45 @@ class Migration(migrations.Migration):
     ]
 
 ==================================================
+ARCHIVO: .\core\migrations\0002_standing.py
+==================================================
+# Generated by Django 5.2.9 on 2025-12-20 06:16
+
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ('core', '0001_initial'),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name='Standing',
+            fields=[
+                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('position', models.IntegerField(default=0)),
+                ('played', models.IntegerField(default=0)),
+                ('won', models.IntegerField(default=0)),
+                ('drawn', models.IntegerField(default=0)),
+                ('lost', models.IntegerField(default=0)),
+                ('points', models.IntegerField(default=0)),
+                ('goals_for', models.IntegerField(default=0)),
+                ('goals_against', models.IntegerField(default=0)),
+                ('goal_diff', models.IntegerField(default=0)),
+                ('group', models.CharField(blank=True, max_length=20, null=True)),
+                ('competition', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='standings', to='core.competition')),
+                ('team', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='core.team')),
+            ],
+            options={
+                'ordering': ['group', 'position'],
+            },
+        ),
+    ]
+
+==================================================
 ARCHIVO: .\core\migrations\__init__.py
 ==================================================
 
@@ -1905,11 +2368,18 @@ ARCHIVO: .\core\templates\core\base.html
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
-        /* Ocultar scrollbar pero permitir scroll */
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        body { min-height: 100vh; background-color: #f8fafc; position: relative; }
+        body::before {
+            content: ""; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none;
+            background: repeating-linear-gradient(45deg, transparent, transparent 10px, #cbd5e1 10px, #cbd5e1 11px);
+            opacity: 0.3;
+        }
     </style>
-</head>
+</head> 
+
 <body class="flex flex-col min-h-screen">
 
     <nav class="bg-slate-900 text-white shadow-lg z-50 relative">
@@ -1917,7 +2387,7 @@ ARCHIVO: .\core\templates\core\base.html
             <div class="flex justify-between h-16">
                 
                 <div class="flex items-center space-x-6">
-                    <a href="{% url 'home' %}" class="flex items-center space-x-2 text-xl font-bold text-yellow-400 hover:text-yellow-300">
+                    <a href="{% url 'home' %}" class="flex items-center space-x-2 text-xl font-bold text-yellow-400 hover:text-yellow-300 transition">
                         <span>⚽</span>
                         <span class="hidden md:inline">PRODE</span>
                     </a>
@@ -1933,6 +2403,12 @@ ARCHIVO: .\core\templates\core\base.html
                         </button>
 
                         <div x-show="open" 
+                             x-transition:enter="transition ease-out duration-100"
+                             x-transition:enter-start="transform opacity-0 scale-95"
+                             x-transition:enter-end="transform opacity-100 scale-100"
+                             x-transition:leave="transition ease-in duration-75"
+                             x-transition:leave-start="transform opacity-100 scale-100"
+                             x-transition:leave-end="transform opacity-0 scale-95"
                              class="absolute left-0 mt-2 w-56 bg-white rounded-md shadow-xl py-2 z-50 text-slate-800 border border-gray-100"
                              style="display: none;">
                             
@@ -1955,66 +2431,134 @@ ARCHIVO: .\core\templates\core\base.html
                 </div>
 
                 <div class="flex items-center space-x-4">
+                    
                     {% if user.is_staff %}
-                        <a href="{% url 'actualizar_web' %}" class="text-gray-400 hover:text-white" title="Actualizar API">🔄</a>
+                        <a href="{% url 'actualizar_web' %}" class="text-gray-400 hover:text-white p-2 rounded-full hover:bg-slate-800 transition" title="Actualizar API">
+                            🔄
+                        </a>
                     {% endif %}
 
                     {% if user.is_authenticated %}
-                        <div class="flex items-center space-x-3">
-                            <span class="text-sm font-medium hidden md:block">{{ user.username }}</span>
-                            <form action="{% url 'account_logout' %}" method="post">
-                                {% csrf_token %}
-                                <button type="submit" class="text-xs bg-slate-800 hover:bg-red-900 text-red-400 px-3 py-1 rounded transition">Salir</button>
-                            </form>
+                        
+                        <div x-data="{ userMenu: false }" class="relative ml-3">
+                            <div>
+                                <button @click="userMenu = !userMenu" @click.outside="userMenu = false" 
+                                        class="flex items-center gap-2 max-w-xs bg-slate-800 rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 focus:ring-blue-500 p-1 pr-3 hover:bg-slate-700 transition" 
+                                        id="user-menu-button" aria-expanded="false" aria-haspopup="true">
+                                    
+                                    <div class="h-8 w-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-xs font-bold text-white border-2 border-slate-800 shadow-sm">
+                                        {{ user.username|slice:":2"|upper }}
+                                    </div>
+                                    
+                                    <span class="text-sm font-medium text-gray-300 hidden md:block">{{ user.username }}</span>
+                                    
+                                    <svg class="h-4 w-4 text-gray-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <div x-show="userMenu" 
+                                 x-transition:enter="transition ease-out duration-100"
+                                 x-transition:enter-start="transform opacity-0 scale-95"
+                                 x-transition:enter-end="transform opacity-100 scale-100"
+                                 x-transition:leave="transition ease-in duration-75"
+                                 x-transition:leave-start="transform opacity-100 scale-100"
+                                 x-transition:leave-end="transform opacity-0 scale-95"
+                                 class="origin-top-right absolute right-0 mt-2 w-56 rounded-xl shadow-2xl py-1 bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-50"
+                                 style="display: none;">
+                                
+                                <div class="px-4 py-3 border-b border-gray-100 bg-gray-50 rounded-t-xl">
+                                    <p class="text-xs text-gray-500 uppercase font-bold tracking-wider">Conectado como</p>
+                                    <p class="text-sm font-bold text-slate-900 truncate">{{ user.email|default:user.username }}</p>
+                                </div>
+
+                                <div class="py-1">
+                                    <a href="{% url 'perfil' %}" class="group flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700">
+                                        
+                                        <svg class="mr-3 h-5 w-5 text-gray-400 group-hover:text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                        </svg>
+                                        Mi Perfil
+                                    </a>
+                                    
+                                    <a href="{% url 'mis_torneos' %}" class="group flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700">
+
+                                        <svg class="mr-3 h-5 w-5 text-gray-400 group-hover:text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                                        </svg>
+                                        Mis Torneos
+                                    </a>
+                                </div>
+
+                                <div class="border-t border-gray-100 py-1">
+                                    <form action="{% url 'account_logout' %}" method="post">
+                                        {% csrf_token %}
+                                        <button type="submit" class="w-full text-left group flex items-center px-4 py-2 text-sm text-red-600 hover:bg-red-50">
+                                            
+                                            <svg class="mr-3 h-5 w-5 text-red-400 group-hover:text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                                            </svg>
+                                            Cerrar Sesión
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
                         </div>
+
                     {% else %}
-                        <a href="{% url 'account_login' %}" class="bg-yellow-500 hover:bg-yellow-600 text-slate-900 px-4 py-2 rounded-md text-sm font-bold transition">Ingresar</a>
+                        <div class="flex items-center space-x-2">
+                            <a href="{% url 'account_login' %}" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium transition">Ingresar</a>
+                            <a href="{% url 'account_signup' %}" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-bold transition shadow-lg shadow-blue-900/50">Registrarse</a>
+                        </div>
                     {% endif %}
                 </div>
             </div>
         </div>
     </nav>
 
-    <div class="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <nav class="flex space-x-8 overflow-x-auto no-scrollbar" aria-label="Tabs">
+    <div class="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm relative group">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
+            
+            <div class="absolute right-0 top-0 bottom-0 w-12 bg-gradient-to-l from-white to-transparent pointer-events-none md:hidden z-10"></div>
+
+            <nav class="flex space-x-5 md:space-x-8 overflow-x-auto no-scrollbar py-1" aria-label="Tabs">
                 
                 <a href="{% url 'home' %}" 
-                   class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition
+                   class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition flex-shrink-0
                    {% if request.resolver_match.url_name == 'home' or request.resolver_match.url_name == 'predecir' %}
-                        border-blue-500 text-blue-600
+                       border-blue-500 text-blue-600
                    {% else %}
-                        border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
+                       border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
                    {% endif %}">
                    📝 Pronósticos
                 </a>
 
                 <a href="{% url 'mis_torneos' %}" 
-                   class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition
+                   class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition flex-shrink-0
                    {% if 'torneo' in request.resolver_match.url_name %}
-                        border-blue-500 text-blue-600
+                       border-blue-500 text-blue-600
                    {% else %}
-                        border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
+                       border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
                    {% endif %}">
-                   🏆 Mis Torneos
-                </a>
+                   🏆 Torneos </a>
 
                 <a href="{% url 'fixture' %}" 
-                   class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition
+                   class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition flex-shrink-0
                    {% if request.resolver_match.url_name == 'fixture' %}
-                        border-blue-500 text-blue-600
+                       border-blue-500 text-blue-600
                    {% else %}
-                        border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
+                       border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
                    {% endif %}">
                    📅 Fixture
                 </a>
 
                 <a href="{% url 'tabla' %}" 
-                   class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition
+                   class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition flex-shrink-0
                    {% if request.resolver_match.url_name == 'tabla' %}
-                        border-blue-500 text-blue-600
+                       border-blue-500 text-blue-600
                    {% else %}
-                        border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
+                       border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
                    {% endif %}">
                    📊 {% if competencia_activa.type == 'CUP' %}Grupos{% else %}Tabla{% endif %}
                 </a>
@@ -2113,6 +2657,307 @@ ARCHIVO: .\core\templates\core\buscar_torneo.html
     {% endif %}
 
 </div>
+{% endblock %}
+==================================================
+ARCHIVO: .\core\templates\core\crear_torneo.html
+==================================================
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="max-w-md mx-auto bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden mt-10">
+    <div class="bg-slate-900 px-6 py-4">
+        <h2 class="text-xl font-bold text-white">Crear Nuevo Torneo</h2>
+        <p class="text-slate-400 text-xs">En {{ competencia.name }}</p>
+    </div>
+    
+    <form method="post" class="p-6 space-y-4">
+        {% csrf_token %}
+        
+        <div>
+            <label class="block text-sm font-bold text-gray-700 mb-2">Nombre del Torneo</label>
+            <input type="text" name="name" required 
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-slate-500 focus:border-slate-500"
+                placeholder="Ej: La Copa de los Amigos">
+        </div>
+
+        {% if form.image %}
+        <div>
+            <label class="block text-sm font-bold text-gray-700 mb-2">Imagen (URL)</label>
+            <input type="url" name="image" 
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-slate-500 focus:border-slate-500"
+                placeholder="https://...">
+        </div>
+        {% endif %}
+
+        <div class="flex gap-3 pt-4">
+            <a href="{% url 'mis_torneos' %}" class="flex-1 text-center py-2 px-4 border border-gray-300 rounded-lg text-gray-700 font-bold hover:bg-gray-50">Cancelar</a>
+            <button type="submit" class="flex-1 bg-slate-900 text-white font-bold py-2 px-4 rounded-lg hover:bg-slate-800 shadow-lg">Crear Torneo</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
+==================================================
+ARCHIVO: .\core\templates\core\detalle_torneo.html
+==================================================
+{% extends 'core/base.html' %}
+
+{% block content %}
+
+<div class="max-w-4xl mx-auto">
+    
+    <div class="mb-8 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div>
+            <div class="flex items-center gap-2 mb-1">
+                <a href="{% url 'mis_torneos' %}" class="text-gray-400 hover:text-slate-900 transition">
+                    ← Volver
+                </a>
+                <span class="text-gray-300">|</span>
+                <span class="text-slate-500 font-bold text-sm tracking-widest uppercase">Tabla de Posiciones</span>
+            </div>
+            <h1 class="text-4xl font-extrabold text-slate-900 tracking-tight">{{ torneo.name }}</h1>
+        </div>
+        
+        <div class="bg-white p-3 rounded-xl border border-gray-200 shadow-sm text-center">
+            <p class="text-[10px] text-gray-400 font-bold uppercase mb-1">Código de Invitación</p>
+            <code class="text-xl font-mono font-bold text-slate-700 tracking-widest">{{ torneo.code }}</code>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+        <table class="w-full text-left border-collapse">
+            <thead>
+                <tr class="bg-slate-50 border-b border-gray-200 text-xs uppercase text-gray-500 font-bold tracking-wider">
+                    <th class="p-4 w-16 text-center">#</th>
+                    <th class="p-4">Usuario</th>
+                    <th class="p-4 text-right">Puntos</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                {% for miembro in ranking %}
+                <tr class="hover:bg-slate-50 transition {% if miembro.user == request.user %}bg-blue-50/50{% endif %}">
+                    
+                    <td class="p-4 text-center">
+                        {% if forloop.counter == 1 %}
+                            <span class="text-2xl">🥇</span>
+                        {% elif forloop.counter == 2 %}
+                            <span class="text-2xl">🥈</span>
+                        {% elif forloop.counter == 3 %}
+                            <span class="text-2xl">🥉</span>
+                        {% else %}
+                            <span class="font-bold text-gray-400">{{ forloop.counter }}</span>
+                        {% endif %}
+                    </td>
+                    
+                    <td class="p-4">
+                        <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 font-bold text-xs">
+                                {{ miembro.user.username|slice:":1"|upper }}
+                            </div>
+                            <span class="font-bold text-slate-700 {% if miembro.user == request.user %}text-blue-700{% endif %}">
+                                {{ miembro.user.username }}
+                                {% if miembro.user == request.user %} (Tú){% endif %}
+                            </span>
+                        </div>
+                    </td>
+                    
+                    <td class="p-4 text-right">
+                        <span class="font-mono font-bold text-xl text-slate-900">{{ miembro.points }}</span>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="3" class="p-8 text-center text-gray-500">
+                        Aún no hay participantes en este torneo.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% endblock %}
+==================================================
+ARCHIVO: .\core\templates\core\editar_perfil.html
+==================================================
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto mt-10">
+    
+    <div class="mb-6 flex items-center justify-between">
+        <div>
+            <h2 class="text-2xl font-bold text-slate-900">Editar Perfil</h2>
+            <p class="text-gray-500 text-sm">Actualiza tu información personal</p>
+        </div>
+        <a href="{% url 'perfil' %}" class="text-gray-500 hover:text-slate-800 font-bold text-sm">Cancelar</a>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        
+        <form method="post" class="p-8 space-y-6">
+            {% csrf_token %}
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-2">Nombre de Usuario</label>
+                    {{ form.username }}
+                    <p class="text-xs text-gray-400 mt-1">Tu apodo en los rankings.</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-2">Email</label>
+                    {{ form.email }}
+                    <p class="text-xs text-gray-400 mt-1">No se puede cambiar.</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-2">Nombre</label>
+                    {{ form.first_name }}
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-2">Apellido</label>
+                    {{ form.last_name }}
+                </div>
+            </div>
+
+            <div class="pt-4 border-t border-gray-100 flex justify-end">
+                <button type="submit" class="bg-slate-900 text-white font-bold py-2.5 px-6 rounded-lg hover:bg-slate-800 transition shadow-lg">
+                    Guardar Cambios
+                </button>
+            </div>
+        </form>
+
+        <div class="bg-slate-50 p-8 border-t border-gray-200">
+            <h3 class="text-lg font-bold text-slate-800 mb-2">Seguridad y Acceso</h3>
+            <div class="flex items-center justify-between">
+                <div>
+                    {% if user.has_usable_password %}
+                        <p class="text-sm text-gray-600">Tienes una contraseña configurada.</p>
+                        <p class="text-xs text-green-600 font-bold mt-1">✓ Cuenta segura</p>
+                    {% else %}
+                        <p class="text-sm text-gray-600">Iniciaste sesión con Google/Social.</p>
+                        <p class="text-xs text-orange-600 font-bold mt-1">⚠ No tienes contraseña para login manual</p>
+                    {% endif %}
+                </div>
+                
+                <a href="{% url 'configurar_password' %}" class="bg-white border border-gray-300 text-slate-700 hover:bg-gray-50 font-bold py-2 px-4 rounded-lg shadow-sm transition text-sm">
+                    {% if user.has_usable_password %}
+                        Cambiar Contraseña
+                    {% else %}
+                        ➕ Crear Contraseña
+                    {% endif %}
+                </a>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}
+==================================================
+ARCHIVO: .\core\templates\core\fixture.html
+==================================================
+{% extends 'core/base.html' %} 
+
+{% block content %}
+
+    <div class="text-center mb-6">
+        <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight">Fixture</h1>
+        <p class="text-gray-600 text-sm">Calendario de {{ competencia_activa.name }}</p>
+    </div>
+
+    <div class="max-w-4xl mx-auto mb-8 px-4 sm:px-0">
+        <label for="ronda-select" class="block text-sm font-bold text-gray-700 mb-2">Seleccionar Fecha:</label>
+        <div class="relative">
+            <select id="ronda-select" 
+                    onchange="window.location.href='?ronda=' + this.value"
+                    class="appearance-none block w-full pl-4 pr-10 py-3 text-base border-gray-300 focus:outline-none focus:ring-slate-500 focus:border-slate-500 sm:text-sm rounded-xl shadow-sm bg-white cursor-pointer hover:border-gray-400 transition">
+                
+                {% for nombre_ronda in rondas_disponibles %}
+                    <option value="{{ nombre_ronda }}" {% if nombre_ronda == ronda_actual %}selected{% endif %}>
+                        {{ nombre_ronda }}
+                    </option>
+                {% endfor %}
+                
+                {% if not rondas_disponibles %}
+                    <option>No hay fechas disponibles</option>
+                {% endif %}
+            </select>
+            
+            <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-500">
+                <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                </svg>
+            </div>
+        </div>
+    </div>
+
+    <div class="max-w-4xl mx-auto space-y-4">
+        
+        {% if partidos_mostrar %}
+            
+            {% for item in partidos_mostrar %}
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden p-4 hover:bg-gray-50 transition flex flex-col sm:flex-row items-center justify-between gap-4">
+                
+                <div class="text-center sm:text-left min-w-[80px]">
+                    <span class="block text-xs font-bold text-gray-400 uppercase">{{ item.partido.date|date:"D d" }}</span>
+                    <span class="block text-xs text-gray-400">{{ item.partido.date|date:"H:i" }}</span>
+                    {% if item.partido.status == 'IN_PLAY' %}
+                        <span class="text-[10px] text-red-500 font-bold animate-pulse">EN VIVO</span>
+                    {% endif %}
+                </div>
+
+                <div class="flex-grow flex items-center justify-center space-x-4 w-full sm:w-auto">
+                    
+                    <div class="flex items-center justify-end w-1/3 space-x-2 text-right">
+                        <span class="font-bold text-slate-800 text-sm md:text-base hidden md:block">{{ item.partido.home_team.name }}</span>
+                        <span class="font-bold text-slate-800 text-sm md:text-base md:hidden">{{ item.partido.home_team.name|slice:":3"|upper }}</span>
+                        {% if item.partido.home_team.logo %}
+                            <img src="{{ item.partido.home_team.logo }}" class="w-8 h-8 object-contain">
+                        {% else %}
+                            <div class="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center text-xs">🏠</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="font-black text-xl text-slate-900 bg-slate-100 px-3 py-1 rounded min-w-[60px] text-center">
+                        {% if item.partido.status == 'FINISHED' or item.partido.status == 'IN_PLAY' %}
+                            {{ item.partido.home_goals }}-{{ item.partido.away_goals }}
+                        {% else %}
+                            VS
+                        {% endif %}
+                    </div>
+
+                    <div class="flex items-center justify-start w-1/3 space-x-2 text-left">
+                        {% if item.partido.away_team.logo %}
+                            <img src="{{ item.partido.away_team.logo }}" class="w-8 h-8 object-contain">
+                        {% else %}
+                            <div class="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center text-xs">✈️</div>
+                        {% endif %}
+                        <span class="font-bold text-slate-800 text-sm md:text-base hidden md:block">{{ item.partido.away_team.name }}</span>
+                        <span class="font-bold text-slate-800 text-sm md:text-base md:hidden">{{ item.partido.away_team.name|slice:":3"|upper }}</span>
+                    </div>
+                </div>
+
+                <div class="w-full sm:w-auto min-w-[140px] text-center">
+                    <span class="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                        {% if item.partido.status == 'FINISHED' %}
+                            Finalizado
+                        {% elif item.partido.status == 'IN_PLAY' %}
+                            Jugando
+                        {% else %}
+                            Pendiente
+                        {% endif %}
+                    </span>
+                </div>
+
+            </div>
+            {% endfor %}
+
+        {% else %}
+            <div class="text-center py-16 bg-white rounded-xl border border-dashed border-gray-300">
+                <p class="text-gray-500 text-lg font-medium">No hay partidos para esta fecha.</p>
+            </div>
+        {% endif %}
+    </div>
+
 {% endblock %}
 ==================================================
 ARCHIVO: .\core\templates\core\gestionar_torneo.html
@@ -2220,110 +3065,151 @@ ARCHIVO: .\core\templates\core\home.html
 
 {% block content %}
 
-    <div class="text-center mb-8">
+    <div class="text-center mb-6">
         <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight">Pronósticos</h1>
         <p class="text-gray-600 text-sm">Juega fecha a fecha en {{ competencia_activa.name }}</p>
     </div>
 
-    <div class="max-w-4xl mx-auto space-y-4">
-        
-        {% for grupo in fixture_agrupado %}
-        <div x-data="{ open: {% if forloop.first %}true{% else %}false{% endif %} }" 
-             class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            
-            <button @click="open = !open" class="w-full flex justify-between items-center px-6 py-4 bg-slate-50 hover:bg-slate-100 transition border-b border-gray-100">
-                <h2 class="text-lg font-bold text-slate-800">{{ grupo.nombre }}</h2>
-                <div class="flex items-center space-x-3">
-                    <span class="text-xs text-gray-500 font-medium">{{ grupo.partidos|length }} partidos</span>
-                    <svg :class="{'rotate-180': open}" class="w-5 h-5 text-gray-400 transform transition-transform duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                    </svg>
-                </div>
-            </button>
-
-            <div x-show="open" x-collapse class="divide-y divide-gray-100">
+    <div class="max-w-4xl mx-auto mb-8 px-4 sm:px-0">
+        <label for="ronda-select" class="block text-sm font-bold text-gray-700 mb-2">Seleccionar Fecha:</label>
+        <div class="relative">
+            <select id="ronda-select" 
+                    onchange="window.location.href='?ronda=' + this.value"
+                    class="appearance-none block w-full pl-4 pr-10 py-3 text-base border-gray-300 focus:outline-none focus:ring-slate-500 focus:border-slate-500 sm:text-sm rounded-xl shadow-sm bg-white cursor-pointer hover:border-gray-400 transition">
                 
-                {% for item in grupo.partidos %}
-                <div class="p-4 hover:bg-gray-50 transition flex flex-col sm:flex-row items-center justify-between gap-4">
-                    
-                    <div class="text-center sm:text-left min-w-[80px]">
-                        <span class="block text-xs font-bold text-gray-400 uppercase">{{ item.partido.date|date:"D d" }}</span>
-                        <span class="block text-xs text-gray-400">{{ item.partido.date|date:"H:i" }}</span>
-                        {% if item.partido.status == 'IN_PLAY' %}
-                            <span class="text-[10px] text-red-500 font-bold animate-pulse">EN VIVO</span>
-                        {% endif %}
-                    </div>
-
-                    <div class="flex-grow flex items-center justify-center space-x-4 w-full sm:w-auto">
-                        <div class="flex items-center justify-end w-1/3 space-x-2 text-right">
-                            <span class="font-bold text-slate-800 text-sm md:text-base hidden md:block">{{ item.partido.home_team.name }}</span>
-                            <span class="font-bold text-slate-800 text-sm md:text-base md:hidden">{{ item.partido.home_team.name|slice:":3"|upper }}</span>
-                            {% if item.partido.home_team.logo %}
-                                <img src="{{ item.partido.home_team.logo }}" class="w-8 h-8 object-contain">
-                            {% else %}
-                                <div class="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center text-xs">🏠</div>
-                            {% endif %}
-                        </div>
-
-                        <div class="font-black text-xl text-slate-900 bg-slate-100 px-3 py-1 rounded min-w-[60px] text-center">
-                            {% if item.partido.status == 'FINISHED' or item.partido.status == 'IN_PLAY' %}
-                                {{ item.partido.home_goals }}-{{ item.partido.away_goals }}
-                            {% else %}
-                                VS
-                            {% endif %}
-                        </div>
-
-                        <div class="flex items-center justify-start w-1/3 space-x-2 text-left">
-                            {% if item.partido.away_team.logo %}
-                                <img src="{{ item.partido.away_team.logo }}" class="w-8 h-8 object-contain">
-                            {% else %}
-                                <div class="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center text-xs">✈️</div>
-                            {% endif %}
-                            <span class="font-bold text-slate-800 text-sm md:text-base hidden md:block">{{ item.partido.away_team.name }}</span>
-                            <span class="font-bold text-slate-800 text-sm md:text-base md:hidden">{{ item.partido.away_team.name|slice:":3"|upper }}</span>
-                        </div>
-                    </div>
-
-                    <div class="w-full sm:w-auto min-w-[140px]">
-                        {% if item.partido.status == 'FINISHED' %}
-                            <div class="text-center">
-                                {% if item.prediccion %}
-                                    <span class="text-xs font-bold text-blue-600 block">Tu pronóstico:</span>
-                                    <span class="font-mono font-bold text-lg">{{ item.prediccion.predicted_home }} - {{ item.prediccion.predicted_away }}</span>
-                                    
-                                    {% if item.prediccion.points > 0 %}
-                                        <span class="block text-[10px] bg-green-100 text-green-700 px-1 rounded mt-1">+{{ item.prediccion.points }} pts</span>
-                                    {% else %}
-                                        <span class="block text-[10px] bg-gray-100 text-gray-500 px-1 rounded mt-1">0 pts</span>
-                                    {% endif %}
-                                {% else %}
-                                    <span class="text-xs text-red-400 font-bold">No jugado</span>
-                                {% endif %}
-                            </div>
-                        {% else %}
-                            {% if item.prediccion %}
-                                <a href="{% url 'predecir' item.partido.id %}" class="block w-full text-center bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold py-2 px-4 rounded-lg text-sm transition">
-                                    ✏️ {{ item.prediccion.predicted_home }}-{{ item.prediccion.predicted_away }}
-                                </a>
-                            {% else %}
-                                <a href="{% url 'predecir' item.partido.id %}" class="block w-full text-center bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-4 rounded-lg text-sm shadow transition">
-                                    Jugar
-                                </a>
-                            {% endif %}
-                        {% endif %}
-                    </div>
-
-                </div>
+                {% for nombre_ronda in rondas_disponibles %}
+                    <option value="{{ nombre_ronda }}" {% if nombre_ronda == ronda_actual %}selected{% endif %}>
+                        {{ nombre_ronda }}
+                    </option>
                 {% endfor %}
+                
+                {% if not rondas_disponibles %}
+                    <option>No hay fechas disponibles</option>
+                {% endif %}
+            </select>
+            
+            <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-500">
+                <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                </svg>
             </div>
         </div>
-        {% empty %}
-            <div class="text-center py-12">
-                <p class="text-gray-500 text-lg">No hay partidos cargados para esta competición.</p>
-                <p class="text-sm text-gray-400">Verifica que hayas corrido el script de actualización.</p>
-            </div>
-        {% endfor %}
     </div>
+
+    <div class="max-w-4xl mx-auto space-y-4">
+        
+        {% if partidos_mostrar %}
+            
+            {% for item in partidos_mostrar %}
+            <div id="match-{{ item.partido.id }}" class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden p-4 hover:bg-gray-50 transition flex flex-col sm:flex-row items-center justify-between gap-4">
+                
+                <div class="text-center sm:text-left min-w-[80px]">
+                    <span class="block text-xs font-bold text-gray-400 uppercase">{{ item.partido.date|date:"D d" }}</span>
+                    <span class="block text-xs text-gray-400">{{ item.partido.date|date:"H:i" }}</span>
+                    {% if item.partido.status == 'IN_PLAY' %}
+                        <span class="text-[10px] text-red-500 font-bold animate-pulse">EN VIVO</span>
+                    {% endif %}
+                </div>
+
+                <div class="flex-grow flex items-center justify-center space-x-4 w-full sm:w-auto">
+                    
+                    <div class="flex items-center justify-end w-1/3 space-x-2 text-right">
+                        <span class="font-bold text-slate-800 text-sm md:text-base hidden md:block">{{ item.partido.home_team.name }}</span>
+                        <span class="font-bold text-slate-800 text-sm md:text-base md:hidden">{{ item.partido.home_team.name|slice:":3"|upper }}</span>
+                        {% if item.partido.home_team.logo %}
+                            <img src="{{ item.partido.home_team.logo }}" class="w-8 h-8 object-contain">
+                        {% else %}
+                            <div class="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center text-xs">🏠</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="font-black text-xl text-slate-900 bg-slate-100 px-3 py-1 rounded min-w-[60px] text-center">
+                        {% if item.partido.status == 'FINISHED' or item.partido.status == 'IN_PLAY' %}
+                            {{ item.partido.home_goals }}-{{ item.partido.away_goals }}
+                        {% else %}
+                            VS
+                        {% endif %}
+                    </div>
+
+                    <div class="flex items-center justify-start w-1/3 space-x-2 text-left">
+                        {% if item.partido.away_team.logo %}
+                            <img src="{{ item.partido.away_team.logo }}" class="w-8 h-8 object-contain">
+                        {% else %}
+                            <div class="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center text-xs">✈️</div>
+                        {% endif %}
+                        <span class="font-bold text-slate-800 text-sm md:text-base hidden md:block">{{ item.partido.away_team.name }}</span>
+                        <span class="font-bold text-slate-800 text-sm md:text-base md:hidden">{{ item.partido.away_team.name|slice:":3"|upper }}</span>
+                    </div>
+                </div>
+
+                <div class="w-full sm:w-auto min-w-[140px]">
+                    {% if item.partido.status == 'FINISHED' %}
+                        <div class="text-center bg-gray-50 p-2 rounded border border-gray-200">
+                            <span class="text-[10px] font-bold text-gray-500 uppercase block mb-1">Tu Predicción</span>
+                            <span class="font-mono font-bold text-lg text-slate-800 block">
+                                {% if item.prediccion %}
+                                    {{ item.prediccion.predicted_home }} - {{ item.prediccion.predicted_away }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </span>
+
+                            <div class="mt-1 border-t border-gray-200 pt-1">
+                                {% if item.prediccion %}
+                                    {% if item.prediccion.points > 0 %}
+                                        <span class="text-xs font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full">
+                                            +{{ item.prediccion.points }} pts
+                                        </span>
+                                    {% else %}
+                                        <span class="text-xs font-bold text-gray-400">
+                                            ptos: {{ item.prediccion.points }}
+                                        </span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="text-xs font-bold text-gray-400">
+                                        ptos: 0
+                                    </span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% else %}
+                        {% if item.prediccion %}
+                            <a href="{% url 'predecir' item.partido.id %}" class="block w-full text-center bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold py-2 px-4 rounded-lg text-sm transition">
+                                ✏️ {{ item.prediccion.predicted_home }}-{{ item.prediccion.predicted_away }}
+                            </a>
+                        {% else %}
+                            <a href="{% url 'predecir' item.partido.id %}" class="block w-full text-center bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-4 rounded-lg text-sm shadow transition">
+                                Jugar
+                            </a>
+                        {% endif %}
+                    {% endif %}
+                </div>
+
+            </div>
+            {% endfor %}
+
+        {% else %}
+            <div class="text-center py-16 bg-white rounded-xl border border-dashed border-gray-300">
+                <p class="text-gray-500 text-lg font-medium">No hay partidos para esta fecha.</p>
+                <p class="text-sm text-gray-400 mt-1">Intenta seleccionar otra en el menú.</p>
+            </div>
+        {% endif %}
+    </div>
+
+    <script>
+        (function() {
+            if (window.location.hash) {
+                var id = window.location.hash.substring(1);
+                var element = document.getElementById(id);
+                if (element) {
+                    window.scrollTo({
+                        top: element.offsetTop - 100, 
+                        behavior: 'instant' 
+                    });
+                }
+            }
+        })();
+    </script>
 
 {% endblock %}
 ==================================================
@@ -2332,99 +3218,290 @@ ARCHIVO: .\core\templates\core\mis_torneos.html
 {% extends 'core/base.html' %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto">
 
-    <div class="flex justify-between items-center mb-8">
-        <h1 class="text-3xl font-bold text-slate-800">🏆 Mis Torneos</h1>
-        <a href="{% url 'buscar_torneo' %}" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-bold shadow transition flex items-center">
-            🔍 Buscar Torneo
+    <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+        <div class="text-center md:text-left">
+            <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight">Mis Torneos</h1>
+            <p class="text-gray-600 text-sm">Gestiona tus ligas y compite con amigos</p>
+        </div>
+        
+        <div class="flex gap-3">
+            <a href="{% url 'unirse_por_codigo' %}" class="flex items-center gap-2 bg-white border border-gray-300 text-slate-700 hover:bg-gray-50 font-bold py-2 px-4 rounded-xl shadow-sm transition">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M8 9a3 3 0 100-6 3 3 0 000 6zM8 11a6 6 0 016 6H2a6 6 0 016-6zM16 7a1 1 0 10-2 0v1h-1a1 1 0 100 2h1v1a1 1 0 102 0v-1h1a1 1 0 100-2h-1V7z" />
+                </svg>
+                Unirse
+            </a>
+            
+            <a href="{% url 'crear_torneo' %}" class="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-4 rounded-xl shadow-lg transition transform hover:-translate-y-0.5">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" />
+                </svg>
+                Crear Nuevo
+            </a>
+        </div>
+    </div>
+
+    {% if pendientes %}
+    <div class="mb-8">
+        <h3 class="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Solicitudes Pendientes</h3>
+        <div class="space-y-3">
+            {% for item in pendientes %}
+            <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="bg-yellow-200 text-yellow-700 p-2 rounded-full">
+                        ⏳
+                    </div>
+                    <div>
+                        <h4 class="font-bold text-yellow-900">{{ item.tournament.name }}</h4>
+                        <p class="text-xs text-yellow-700">Esperando aprobación del administrador</p>
+                    </div>
+                </div>
+                <span class="text-xs font-mono bg-white px-2 py-1 rounded border border-yellow-200 text-yellow-600">PENDIENTE</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if mis_torneos %}
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {% for item in mis_torneos %}
+            
+            <div class="group bg-white rounded-2xl shadow-sm border border-gray-200 hover:shadow-md transition duration-300 flex flex-col overflow-hidden relative">
+                
+                <div class="h-2 w-full bg-gradient-to-r from-slate-700 to-slate-900 group-hover:from-blue-600 group-hover:to-blue-800 transition-all"></div>
+
+                <div class="p-6 flex-grow flex flex-col">
+                    
+                    <div class="flex items-start justify-between mb-4">
+                        <div class="bg-slate-100 p-3 rounded-xl">
+                            {% if item.tournament.image %}
+                                <img src="{{ item.tournament.image }}" class="w-8 h-8 object-cover rounded-full">
+                            {% else %}
+                                <span class="text-2xl">🏆</span>
+                            {% endif %}
+                        </div>
+                        
+                        {% if item.tournament.creator == request.user %}
+                            <span class="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-1 rounded-full border border-blue-200">ADMIN</span>
+                        {% else %}
+                            <span class="bg-gray-100 text-gray-600 text-[10px] font-bold px-2 py-1 rounded-full border border-gray-200">JUGADOR</span>
+                        {% endif %}
+                    </div>
+
+                    <h2 class="text-xl font-bold text-slate-800 mb-1 leading-tight">{{ item.tournament.name }}</h2>
+                    <p class="text-xs text-gray-500 mb-6">Creado por {{ item.tournament.creator.username }}</p>
+
+                    <div class="flex items-center gap-4 mb-6 text-sm text-gray-600 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                        <div class="flex-1 text-center border-r border-gray-200">
+                            <span class="block font-bold text-slate-900 text-lg">{{ item.points }}</span>
+                            <span class="text-[10px] uppercase">Puntos</span>
+                        </div>
+                        <div class="flex-1 text-center">
+                            <span class="block font-bold text-slate-900 text-lg">#{{ item.id }}</span> <span class="text-[10px] uppercase">Ranking</span>
+                        </div>
+                    </div>
+
+                    {% if item.tournament.creator == request.user %}
+                    <div class="mt-auto mb-4">
+                        <p class="text-[10px] text-gray-400 font-bold uppercase mb-1">Código de invitación:</p>
+                        <div class="flex items-center gap-2 bg-gray-50 border border-dashed border-gray-300 rounded p-2 cursor-pointer hover:bg-gray-100 transition" onclick="navigator.clipboard.writeText('{{ item.tournament.code }}'); alert('Código copiado: {{ item.tournament.code }}')">
+                            <code class="text-sm font-mono font-bold text-slate-700 flex-grow text-center tracking-widest">{{ item.tournament.code }}</code>
+                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="mt-auto"></div>
+                    {% endif %}
+
+                    <a href="{% url 'detalle_torneo' item.tournament.id %}" class="block w-full text-center bg-white border-2 border-slate-900 text-slate-900 hover:bg-slate-900 hover:text-white font-bold py-2.5 rounded-xl transition-colors duration-200">
+                        Ver Tabla
+                    </a>
+
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+    {% else %}
+        <div class="text-center py-20 bg-white rounded-3xl border-2 border-dashed border-gray-200">
+            <div class="mb-4 text-6xl opacity-20">⚽</div>
+            <h3 class="text-xl font-bold text-gray-900 mb-2">Aún no tienes torneos</h3>
+            <p class="text-gray-500 max-w-sm mx-auto mb-8">Únete a una liga existente con un código o crea la tuya propia para desafiar a tus amigos.</p>
+            <div class="flex justify-center gap-4">
+                <a href="{% url 'crear_torneo' %}" class="bg-slate-900 text-white font-bold py-2 px-6 rounded-xl hover:bg-slate-800 transition">Crear Torneo</a>
+            </div>
+        </div>
+    {% endif %}
+
+{% endblock %}
+==================================================
+ARCHIVO: .\core\templates\core\password.html
+==================================================
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="max-w-md mx-auto mt-12">
+    <div class="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
+        <div class="bg-slate-900 px-6 py-4">
+            <h2 class="text-xl font-bold text-white">{{ titulo }}</h2>
+        </div>
+
+        <form method="post" class="p-6 space-y-4">
+            {% csrf_token %}
+            
+            {% for field in form %}
+            <div>
+                <label class="block text-sm font-bold text-gray-700 mb-1">{{ field.label }}</label>
+                <div class="django-password-input">
+                    {{ field }}
+                </div>
+                {% if field.help_text %}
+                    <p class="text-xs text-gray-400 mt-1">{{ field.help_text }}</p>
+                {% endif %}
+                {% if field.errors %}
+                    <p class="text-xs text-red-500 font-bold mt-1">{{ field.errors.0 }}</p>
+                {% endif %}
+            </div>
+            {% endfor %}
+
+            <div class="pt-4 flex gap-3">
+                <a href="{% url 'editar_perfil' %}" class="flex-1 text-center py-2 px-4 border border-gray-300 rounded-lg text-gray-700 font-bold hover:bg-gray-50">Cancelar</a>
+                <button type="submit" class="flex-1 bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 shadow-md">
+                    Confirmar
+                </button>
+            </div>
+        </form>
+    </div>
+    
+    <style>
+        .django-password-input input {
+            width: 100%;
+            padding: 0.5rem 1rem;
+            border: 1px solid #d1d5db;
+            border-radius: 0.5rem;
+        }
+        .django-password-input ul { font-size: 0.75rem; color: #6b7280; list-style-type: disc; margin-left: 1rem; }
+    </style>
+</div>
+{% endblock %}
+==================================================
+ARCHIVO: .\core\templates\core\perfil.html
+==================================================
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto">
+    
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 mb-8 flex flex-col md:flex-row items-center gap-8">
+        <div class="w-24 h-24 rounded-full bg-slate-900 text-white flex items-center justify-center text-3xl font-bold shadow-xl border-4 border-slate-100">
+            {{ user.username|slice:":2"|upper }}
+        </div>
+        
+        <div class="text-center md:text-left flex-grow">
+            <h1 class="text-3xl font-extrabold text-slate-900 mb-1">{{ user.username }}</h1>
+            <p class="text-gray-500 flex items-center justify-center md:justify-start gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z" />
+                    <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z" />
+                </svg>
+                {{ user.email }}
+            </p>
+            <div class="mt-4 flex flex-wrap justify-center md:justify-start gap-3">
+                <span class="bg-slate-100 text-slate-700 px-3 py-1 rounded-full text-xs font-bold border border-slate-200">
+                    📅 Miembro desde {{ user.date_joined|date:"M Y" }}
+                </span>
+                <span class="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-xs font-bold border border-blue-100">
+                    ⚽ Fanático del Fútbol
+                </span>
+            </div>
+        </div>
+
+        <a href="{% url 'editar_perfil' %}" class="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-bold py-2 px-4 rounded-lg shadow-sm transition inline-flex items-center gap-2">
+            ⚙️ Editar Datos
         </a>
     </div>
 
-    <div class="bg-white p-6 rounded-lg shadow-md border border-gray-200 mb-8">
-        <h2 class="text-xl font-bold text-gray-800 mb-4 border-b pb-2">✨ Crear Nuevo Torneo</h2>
+    <h2 class="text-xl font-bold text-slate-900 mb-4">Estadísticas de Carrera</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         
-        <form method="post" class="flex flex-col md:flex-row gap-4 items-end">
-            {% csrf_token %}
+        <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden group hover:border-blue-300 transition">
+            <div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-blue-600" viewBox="0 0 20 20" fill="currentColor"><path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" /></svg>
+            </div>
+            <p class="text-sm text-gray-500 font-bold uppercase tracking-wider">Puntos Totales</p>
+            <p class="text-4xl font-extrabold text-slate-900 mt-2">{{ total_puntos }}</p>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden group hover:border-green-300 transition">
+            <div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-green-600" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" /></svg>
+            </div>
+            <p class="text-sm text-gray-500 font-bold uppercase tracking-wider">Efectividad</p>
+            <div class="flex items-end gap-2">
+                <p class="text-4xl font-extrabold text-green-600 mt-2">{{ efectividad }}%</p>
+                <span class="text-xs text-gray-400 mb-1 font-bold">de acierto</span>
+            </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden group hover:border-purple-300 transition">
+            <div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-purple-600" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" /></svg>
+            </div>
+            <p class="text-sm text-gray-500 font-bold uppercase tracking-wider">Plenos (3 Pts)</p>
+            <p class="text-4xl font-extrabold text-purple-600 mt-2">{{ plenos }}</p>
+            <p class="text-xs text-purple-400 font-bold mt-1">Resultados Exactos</p>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden group hover:border-orange-300 transition">
+            <div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-orange-600" viewBox="0 0 20 20" fill="currentColor"><path d="M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z" /><path d="M12 2.252A8.014 8.014 0 0117.748 8H12V2.252z" /></svg>
+            </div>
+            <p class="text-sm text-gray-500 font-bold uppercase tracking-wider">Promedio / Partido</p>
+            <p class="text-4xl font-extrabold text-orange-600 mt-2">{{ promedio }}</p>
+        </div>
+    </div>
+
+    <div class="bg-slate-50 rounded-xl p-6 border border-slate-200">
+        <h3 class="font-bold text-slate-700 mb-4">Desglose de Aciertos</h3>
+        <div class="flex flex-col md:flex-row gap-4">
             
-            <div class="flex-grow w-full">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Nombre del Torneo</label>
-                {{ form.name }} </div>
-
-            <div class="flex-grow w-full">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Imagen (URL Opcional)</label>
-                {{ form.image }}
+            <div class="flex-1">
+                <div class="flex justify-between text-xs font-bold mb-1">
+                    <span class="text-purple-700">Plenos (Exactos)</span>
+                    <span class="text-purple-700">{{ plenos }}</span>
+                </div>
+                <div class="w-full bg-slate-200 rounded-full h-2.5">
+                    <div class="bg-purple-500 h-2.5 rounded-full" style="width: {% widthratio plenos jugados_count 100 %}%"></div>
+                </div>
             </div>
 
-            <button type="submit" class="bg-yellow-500 hover:bg-yellow-600 text-slate-900 font-bold px-6 py-2 rounded-md transition w-full md:w-auto h-[42px]">
-                Crear
-            </button>
-        </form>
-    </div>
-
-    <h2 class="text-2xl font-bold text-slate-700 mb-4">✅ Jugando Actualmente</h2>
-    
-    {% if jugando %}
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-            {% for miembro in jugando %}
-            <div class="bg-white p-5 rounded-lg shadow border border-green-200 relative overflow-hidden group hover:shadow-lg transition">
-                <div class="absolute top-0 right-0 bg-green-500 text-white text-xs font-bold px-2 py-1 rounded-bl-lg">
-                    ACTIVO
+            <div class="flex-1">
+                <div class="flex justify-between text-xs font-bold mb-1">
+                    <span class="text-blue-700">Tendencias (Ganador)</span>
+                    <span class="text-blue-700">{{ tendencias }}</span>
                 </div>
-                
-                <div class="flex items-center space-x-4">
-                    {% if miembro.tournament.image %}
-                        <img src="{{ miembro.tournament.image }}" class="w-12 h-12 rounded-full object-cover border-2 border-green-500">
+                <div class="w-full bg-slate-200 rounded-full h-2.5">
+                    <div class="bg-blue-500 h-2.5 rounded-full" style="width: {% widthratio tendencias jugados_count 100 %}%"></div>
+                </div>
+            </div>
+
+            <div class="flex-1">
+                <div class="flex justify-between text-xs font-bold mb-1">
+                    <span class="text-red-700">Fallos (0 Pts)</span>
+                    <span class="text-red-700">{{ fallos }}</span> # Corregido: Variable fallos
+                </div>
+                <div class="w-full bg-slate-200 rounded-full h-2.5">
+                    {% if jugados_count > 0 %}
+                    <div class="bg-red-400 h-2.5 rounded-full" style="width: {% widthratio fallos jugados_count 100 %}%"></div>
                     {% else %}
-                        <div class="w-12 h-12 rounded-full bg-slate-200 flex items-center justify-center text-xl">🏆</div>
+                    <div class="bg-red-400 h-2.5 rounded-full" style="width: 0%"></div>
                     {% endif %}
-                    
-                    <div>
-                        <h3 class="font-bold text-lg text-gray-900">{{ miembro.tournament.name }}</h3>
-                        <p class="text-sm text-gray-500">Código: <span class="font-mono bg-gray-100 px-1 rounded">{{ miembro.tournament.code }}</span></p>
-                    </div>
                 </div>
-
-                <div class="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center">
-                    <span class="text-sm font-semibold text-slate-600">Tu Puntaje: {{ miembro.points }} pts</span>
-    
-                    <div class="flex space-x-3">
-                        {% if miembro.tournament.creator == user %}
-                            <a href="{% url 'gestionar_torneo' miembro.tournament.id %}" class="text-orange-600 text-sm hover:underline font-bold flex items-center">
-                                ⚙️ Gestionar
-                            </a>
-                    {% endif %}
-
-                    <a href="{% url 'ranking_torneo' miembro.tournament.id %}" class="text-blue-600 text-sm hover:underline font-medium">
-                        Ver Ranking &rarr;
-                    </a>
+            </div>
+        </div>
     </div>
-</div>
-            </div>
-            {% endfor %}
-        </div>
-    {% else %}
-        <div class="bg-gray-50 p-8 rounded-lg text-center border border-dashed border-gray-300 mb-8">
-            <p class="text-gray-500">Aún no estás participando en ningún torneo.</p>
-        </div>
-    {% endif %}
-
-    {% if pendientes %}
-        <h2 class="text-2xl font-bold text-slate-700 mb-4">⏳ Solicitudes Pendientes</h2>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {% for miembro in pendientes %}
-            <div class="bg-white p-5 rounded-lg shadow border border-orange-200 opacity-75">
-                <div class="flex items-center space-x-4">
-                    <div class="w-12 h-12 rounded-full bg-orange-100 flex items-center justify-center text-xl">⏳</div>
-                    <div>
-                        <h3 class="font-bold text-lg text-gray-900">{{ miembro.tournament.name }}</h3>
-                        <p class="text-sm text-orange-600 font-medium">Esperando al administrador...</p>
-                    </div>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-    {% endif %}
 
 </div>
 {% endblock %}
@@ -2466,8 +3543,8 @@ ARCHIVO: .\core\templates\core\prediccion.html
                     <div class="text-center">
                         <label class="block text-sm font-bold text-gray-500 mb-1">{{ partido.away_team.flag_code|default:"✈️" }} Visitante</label>
                         <input type="number" name="predicted_away" min="0" max="20" required
-                               value="{{ form.predicted_away.value|default_if_none:'' }}"
-                               class="w-20 h-20 text-center text-4xl font-bold text-slate-900 border-2 border-gray-300 rounded-lg focus:border-yellow-500 focus:ring-4 focus:ring-yellow-200 outline-none transition">
+                            value="{{ form.predicted_away.value|default_if_none:'' }}"
+                            class="w-20 h-20 text-center text-4xl font-bold text-slate-900 border-2 border-gray-300 rounded-lg focus:border-yellow-500 focus:ring-4 focus:ring-yellow-200 outline-none transition">
                     </div>
                 </div>
 
@@ -2550,6 +3627,120 @@ ARCHIVO: .\core\templates\core\ranking.html
                 {% endfor %}
             </tbody>
         </table>
+    </div>
+</div>
+{% endblock %}
+==================================================
+ARCHIVO: .\core\templates\core\tabla.html
+==================================================
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+
+    <div class="text-center mb-8">
+        <h1 class="text-3xl font-extrabold text-slate-900">Tabla de Posiciones</h1>
+        <p class="text-gray-500">{{ competencia.name }}</p>
+    </div>
+
+    {% for grupo in tabla_agrupada %}
+    <div class="mb-8 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        
+        <div class="bg-slate-50 px-6 py-3 border-b border-gray-200">
+            <h2 class="font-bold text-slate-700">{{ grupo.nombre_grupo }}</h2>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm text-left">
+                <thead class="text-xs text-gray-500 uppercase bg-gray-50 border-b">
+                    <tr>
+                        <th class="px-4 py-3 text-center">Pos</th>
+                        <th class="px-4 py-3">Equipo</th>
+                        <th class="px-4 py-3 text-center font-bold text-black">Pts</th>
+                        <th class="px-2 py-3 text-center hidden sm:table-cell">PJ</th>
+                        <th class="px-2 py-3 text-center hidden md:table-cell">PG</th>
+                        <th class="px-2 py-3 text-center hidden md:table-cell">PE</th>
+                        <th class="px-2 py-3 text-center hidden md:table-cell">PP</th>
+                        <th class="px-2 py-3 text-center hidden sm:table-cell">DG</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    {% for stat in grupo.equipos %}
+                    <tr class="hover:bg-slate-50 transition">
+                        <td class="px-4 py-3 text-center font-bold 
+                            {% if stat.position <= 2 %}text-green-600{% elif stat.position >= 18 %}text-red-500{% else %}text-gray-500{% endif %}">
+                            {{ stat.position }}
+                        </td>
+                        <td class="px-4 py-3 font-medium text-slate-900 flex items-center space-x-2">
+                            {% if stat.team.logo %}
+                                <img src="{{ stat.team.logo }}" class="w-6 h-6 object-contain">
+                            {% endif %}
+                            <span>{{ stat.team.name }}</span>
+                        </td>
+                        <td class="px-4 py-3 text-center font-black text-slate-900 text-base bg-slate-50">
+                            {{ stat.points }}
+                        </td>
+                        <td class="px-2 py-3 text-center hidden sm:table-cell text-gray-600">{{ stat.played }}</td>
+                        <td class="px-2 py-3 text-center hidden md:table-cell text-green-600">{{ stat.won }}</td>
+                        <td class="px-2 py-3 text-center hidden md:table-cell text-yellow-600">{{ stat.drawn }}</td>
+                        <td class="px-2 py-3 text-center hidden md:table-cell text-red-600">{{ stat.lost }}</td>
+                        <td class="px-2 py-3 text-center hidden sm:table-cell font-bold text-slate-700">
+                            {% if stat.goal_diff > 0 %}+{% endif %}{{ stat.goal_diff }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% empty %}
+    <div class="text-center py-12 bg-white rounded-lg border border-dashed border-gray-300">
+        <p class="text-gray-500">No hay tabla de posiciones cargada.</p>
+        <p class="text-sm text-gray-400">Ejecuta el script de carga de tablas.</p>
+    </div>
+    {% endfor %}
+
+</div>
+{% endblock %}
+==================================================
+ARCHIVO: .\core\templates\core\unirse_por_codigo.html
+==================================================
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="max-w-md mx-auto mt-16 px-4">
+    <div class="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden text-center">
+        
+        <div class="bg-slate-900 py-6 px-4">
+            <h2 class="text-2xl font-bold text-white tracking-tight">Unirse a un Torneo</h2>
+            <p class="text-slate-400 text-sm mt-1">Ingresa el código de invitación</p>
+        </div>
+
+        <form method="post" class="p-8">
+            {% csrf_token %}
+            
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="mb-4 p-3 rounded text-sm font-bold {{ message.tags }} bg-red-100 text-red-700">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+
+            <div class="mb-6">
+                <input type="text" name="codigo" required 
+                    class="w-full text-center text-2xl font-mono tracking-widest uppercase border-2 border-gray-300 rounded-xl py-3 focus:ring-4 focus:ring-slate-200 focus:border-slate-900 transition outline-none placeholder-gray-300"
+                    placeholder="XXXXXX" maxlength="10">
+            </div>
+
+            <button type="submit" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition">
+                Ingresar al Torneo
+            </button>
+        </form>
+
+        <div class="bg-gray-50 py-4 border-t border-gray-100">
+            <a href="{% url 'mis_torneos' %}" class="text-sm text-gray-500 hover:text-slate-900 font-medium">Cancelar</a>
+        </div>
     </div>
 </div>
 {% endblock %}

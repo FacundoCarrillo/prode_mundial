@@ -9,43 +9,17 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
-        /* Ocultar scrollbar pero permitir scroll */
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-    </style>
-    <style>
-        body {
-            min-height: 100vh;
-            background-color: #f8fafc;
-            position: relative;
-        }
-
+        
+        body { min-height: 100vh; background-color: #f8fafc; position: relative; }
         body::before {
-            content: "";
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: -1;
-            pointer-events: none;
-
-            /* Líneas diagonales limpias */
-            background: repeating-linear-gradient(
-                45deg,
-                transparent,
-                transparent 10px,
-                #cbd5e1 10px,
-                #cbd5e1 11px
-            );
-            
-            opacity: 0.3; /* Muy suave */
+            content: ""; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none;
+            background: repeating-linear-gradient(45deg, transparent, transparent 10px, #cbd5e1 10px, #cbd5e1 11px);
+            opacity: 0.3;
         }
     </style>
-    
-
 </head> 
-
 
 <body class="flex flex-col min-h-screen">
 
@@ -54,7 +28,7 @@
             <div class="flex justify-between h-16">
                 
                 <div class="flex items-center space-x-6">
-                    <a href="{% url 'home' %}" class="flex items-center space-x-2 text-xl font-bold text-yellow-400 hover:text-yellow-300">
+                    <a href="{% url 'home' %}" class="flex items-center space-x-2 text-xl font-bold text-yellow-400 hover:text-yellow-300 transition">
                         <span>⚽</span>
                         <span class="hidden md:inline">PRODE</span>
                     </a>
@@ -70,6 +44,12 @@
                         </button>
 
                         <div x-show="open" 
+                             x-transition:enter="transition ease-out duration-100"
+                             x-transition:enter-start="transform opacity-0 scale-95"
+                             x-transition:enter-end="transform opacity-100 scale-100"
+                             x-transition:leave="transition ease-in duration-75"
+                             x-transition:leave-start="transform opacity-100 scale-100"
+                             x-transition:leave-end="transform opacity-0 scale-95"
                              class="absolute left-0 mt-2 w-56 bg-white rounded-md shadow-xl py-2 z-50 text-slate-800 border border-gray-100"
                              style="display: none;">
                             
@@ -92,66 +72,134 @@
                 </div>
 
                 <div class="flex items-center space-x-4">
+                    
                     {% if user.is_staff %}
-                        <a href="{% url 'actualizar_web' %}" class="text-gray-400 hover:text-white" title="Actualizar API">🔄</a>
+                        <a href="{% url 'actualizar_web' %}" class="text-gray-400 hover:text-white p-2 rounded-full hover:bg-slate-800 transition" title="Actualizar API">
+                            🔄
+                        </a>
                     {% endif %}
 
                     {% if user.is_authenticated %}
-                        <div class="flex items-center space-x-3">
-                            <span class="text-sm font-medium hidden md:block">{{ user.username }}</span>
-                            <form action="{% url 'account_logout' %}" method="post">
-                                {% csrf_token %}
-                                <button type="submit" class="text-xs bg-slate-800 hover:bg-red-900 text-red-400 px-3 py-1 rounded transition">Salir</button>
-                            </form>
+                        
+                        <div x-data="{ userMenu: false }" class="relative ml-3">
+                            <div>
+                                <button @click="userMenu = !userMenu" @click.outside="userMenu = false" 
+                                        class="flex items-center gap-2 max-w-xs bg-slate-800 rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 focus:ring-blue-500 p-1 pr-3 hover:bg-slate-700 transition" 
+                                        id="user-menu-button" aria-expanded="false" aria-haspopup="true">
+                                    
+                                    <div class="h-8 w-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-xs font-bold text-white border-2 border-slate-800 shadow-sm">
+                                        {{ user.username|slice:":2"|upper }}
+                                    </div>
+                                    
+                                    <span class="text-sm font-medium text-gray-300 hidden md:block">{{ user.username }}</span>
+                                    
+                                    <svg class="h-4 w-4 text-gray-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <div x-show="userMenu" 
+                                 x-transition:enter="transition ease-out duration-100"
+                                 x-transition:enter-start="transform opacity-0 scale-95"
+                                 x-transition:enter-end="transform opacity-100 scale-100"
+                                 x-transition:leave="transition ease-in duration-75"
+                                 x-transition:leave-start="transform opacity-100 scale-100"
+                                 x-transition:leave-end="transform opacity-0 scale-95"
+                                 class="origin-top-right absolute right-0 mt-2 w-56 rounded-xl shadow-2xl py-1 bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-50"
+                                 style="display: none;">
+                                
+                                <div class="px-4 py-3 border-b border-gray-100 bg-gray-50 rounded-t-xl">
+                                    <p class="text-xs text-gray-500 uppercase font-bold tracking-wider">Conectado como</p>
+                                    <p class="text-sm font-bold text-slate-900 truncate">{{ user.email|default:user.username }}</p>
+                                </div>
+
+                                <div class="py-1">
+                                    <a href="{% url 'perfil' %}" class="group flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700">
+                                        
+                                        <svg class="mr-3 h-5 w-5 text-gray-400 group-hover:text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                        </svg>
+                                        Mi Perfil
+                                    </a>
+                                    
+                                    <a href="{% url 'mis_torneos' %}" class="group flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700">
+
+                                        <svg class="mr-3 h-5 w-5 text-gray-400 group-hover:text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                                        </svg>
+                                        Mis Torneos
+                                    </a>
+                                </div>
+
+                                <div class="border-t border-gray-100 py-1">
+                                    <form action="{% url 'account_logout' %}" method="post">
+                                        {% csrf_token %}
+                                        <button type="submit" class="w-full text-left group flex items-center px-4 py-2 text-sm text-red-600 hover:bg-red-50">
+                                            
+                                            <svg class="mr-3 h-5 w-5 text-red-400 group-hover:text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                                            </svg>
+                                            Cerrar Sesión
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
                         </div>
+
                     {% else %}
-                        <a href="{% url 'account_login' %}" class="bg-yellow-500 hover:bg-yellow-600 text-slate-900 px-4 py-2 rounded-md text-sm font-bold transition">Ingresar</a>
+                        <div class="flex items-center space-x-2">
+                            <a href="{% url 'account_login' %}" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium transition">Ingresar</a>
+                            <a href="{% url 'account_signup' %}" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-bold transition shadow-lg shadow-blue-900/50">Registrarse</a>
+                        </div>
                     {% endif %}
                 </div>
             </div>
         </div>
     </nav>
 
-    <div class="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <nav class="flex space-x-8 overflow-x-auto no-scrollbar" aria-label="Tabs">
+    <div class="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm relative group">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
+            
+            <div class="absolute right-0 top-0 bottom-0 w-12 bg-gradient-to-l from-white to-transparent pointer-events-none md:hidden z-10"></div>
+
+            <nav class="flex space-x-5 md:space-x-8 overflow-x-auto no-scrollbar py-1" aria-label="Tabs">
                 
                 <a href="{% url 'home' %}" 
-                   class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition
+                   class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition flex-shrink-0
                    {% if request.resolver_match.url_name == 'home' or request.resolver_match.url_name == 'predecir' %}
-                        border-blue-500 text-blue-600
+                       border-blue-500 text-blue-600
                    {% else %}
-                        border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
+                       border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
                    {% endif %}">
                    📝 Pronósticos
                 </a>
 
                 <a href="{% url 'mis_torneos' %}" 
-                   class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition
+                   class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition flex-shrink-0
                    {% if 'torneo' in request.resolver_match.url_name %}
-                        border-blue-500 text-blue-600
+                       border-blue-500 text-blue-600
                    {% else %}
-                        border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
+                       border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
                    {% endif %}">
-                   🏆 Mis Torneos
-                </a>
+                   🏆 Torneos </a>
 
                 <a href="{% url 'fixture' %}" 
-                   class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition
+                   class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition flex-shrink-0
                    {% if request.resolver_match.url_name == 'fixture' %}
-                        border-blue-500 text-blue-600
+                       border-blue-500 text-blue-600
                    {% else %}
-                        border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
+                       border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
                    {% endif %}">
                    📅 Fixture
                 </a>
 
                 <a href="{% url 'tabla' %}" 
-                   class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition
+                   class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition flex-shrink-0
                    {% if request.resolver_match.url_name == 'tabla' %}
-                        border-blue-500 text-blue-600
+                       border-blue-500 text-blue-600
                    {% else %}
-                        border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
+                       border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
                    {% endif %}">
                    📊 {% if competencia_activa.type == 'CUP' %}Grupos{% else %}Tabla{% endif %}
                 </a>

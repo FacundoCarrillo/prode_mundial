@@ -12,7 +12,7 @@
         <div class="relative">
             <select id="ronda-select" 
                     onchange="window.location.href='?ronda=' + this.value"
-                    class="block w-full pl-4 pr-10 py-3 text-base border-gray-300 focus:outline-none focus:ring-slate-500 focus:border-slate-500 sm:text-sm rounded-xl shadow-sm bg-white cursor-pointer hover:border-gray-400 transition">
+                    class="appearance-none block w-full pl-4 pr-10 py-3 text-base border-gray-300 focus:outline-none focus:ring-slate-500 focus:border-slate-500 sm:text-sm rounded-xl shadow-sm bg-white cursor-pointer hover:border-gray-400 transition">
                 
                 {% for nombre_ronda in rondas_disponibles %}
                     <option value="{{ nombre_ronda }}" {% if nombre_ronda == ronda_actual %}selected{% endif %}>
