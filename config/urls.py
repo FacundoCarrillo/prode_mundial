@@ -21,7 +21,7 @@ from core.views import home, predecir_partido, ranking  # <--- Agregamos ranking
 from django.urls import path, include # <--- Agrega include aquí
 from core.views import home, predecir_partido, ranking, actualizar_partidos_web, mis_torneos, buscar_torneo, unirse_torneo, gestionar_torneo, responder_solicitud, eliminar_torneo # <--- Importala
 from core.views import correr_migraciones_web, cargar_fixture_inicial, cambiar_competencia, fixture, tabla_posiciones, cargar_tabla, debug_datos, crear_torneo, unirse_por_codigo, detalle_torneo
-from core.views import crear_admin_emergencia, perfil_usuario, editar_perfil, configurar_password
+from core.views import crear_admin_emergencia, perfil_usuario, editar_perfil, configurar_password, pronosticos_general, pronosticos_liga
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -59,5 +59,12 @@ urlpatterns = [
     path('perfil/', perfil_usuario, name='perfil'),
     path('perfil/editar/', editar_perfil, name='editar_perfil'),
     path('perfil/password/', configurar_password, name='configurar_password'),
+    # --- PRONÓSTICOS (Estas son las que faltaban) ---
+    path('pronosticos/', pronosticos_general, name='pronosticos_general'),
+    path('pronosticos/<int:competition_id>/', pronosticos_liga, name='pronosticos_liga'),
+    
+    path('fixture/<int:competition_id>/', fixture, name='fixture_con_id'),
+    
+    path('tabla/<int:competition_id>/', tabla_posiciones, name='tabla_con_id'),
 ]
 

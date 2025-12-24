@@ -22,70 +22,46 @@ from .forms import EditarPerfilForm # Asegúrate de importar el form que acabamo
 
 # En core/views.py
 
+# En core/views.py
+
 @login_required
 def home(request):
-    # 1. Competencia Activa
+    # 1. RECUPERAR MEMORIA (Solo para pintar el menú, NO para filtrar los partidos)
     comp_id = request.session.get('competencia_id')
-    if not comp_id:
-        first_comp = Competition.objects.first()
-        if first_comp:
-            comp_id = first_comp.id
-            request.session['competencia_id'] = comp_id
-    
     competencia_activa = None
-    partidos = Match.objects.none()
-    
     if comp_id:
-        competencia_activa = Competition.objects.get(id=comp_id)
-        # Filtramos por competencia para que no se mezclen
-        partidos = Match.objects.filter(competition_id=comp_id).order_by('date')
+        competencia_activa = Competition.objects.filter(id=comp_id).first()
 
-    # 2. Agrupar Partidos para el Menú
-    grupos_temp = {}
-    rondas_nombres = [] 
-
-    for partido in partidos:
-        ronda = partido.round_name
-        if ronda not in grupos_temp:
-            grupos_temp[ronda] = []
-            rondas_nombres.append(ronda)
-        
-        # Buscamos predicción del usuario
-        pred = Prediction.objects.filter(user=request.user, match=partido).first()
-        
-        item = {
-            'partido': partido,
-            'prediccion': pred
-        }
-        grupos_temp[ronda].append(item)
-
-    # 3. Lógica del Selector de Fechas
-    ronda_seleccionada = request.GET.get('ronda')
-
-    # Si no eligió nada, buscamos la más cercana a HOY
-    if not ronda_seleccionada and rondas_nombres:
-        hoy = timezone.now()
-        partido_futuro = partidos.filter(date__gte=hoy).first()
-        
-        if partido_futuro:
-            ronda_seleccionada = partido_futuro.round_name
-        else:
-            # Si ya terminó todo, mostramos la última fecha
-            ronda_seleccionada = rondas_nombres[-1]
-
-    # Obtenemos los partidos de esa fecha específica
-    grupo_activo = []
-    if ronda_seleccionada and ronda_seleccionada in grupos_temp:
-        grupo_activo = grupos_temp[ronda_seleccionada]
+    # 2. DEFINIR RANGO DE FECHAS (Global)
+    # Mostramos partidos de Ayer, Hoy y Mañana para que el inicio no quede vacío
+    ahora = timezone.now()
+    inicio = ahora - timedelta(hours=24)
+    fin = ahora + timedelta(hours=48)
     
-    # Ordenamos por horario
-    grupo_activo.sort(key=lambda x: x['partido'].date)
+    # 3. BUSCAR PARTIDOS DE TODAS LAS LIGAS
+    # Importante: order_by('competition') es vital para el regroup en el HTML
+    partidos_proximos = Match.objects.filter(
+        date__gte=inicio,
+        date__lte=fin
+    ).select_related('competition', 'home_team', 'away_team').order_by('competition', 'date')
+
+    # 4. EMPAQUETAR CON PREDICCIONES
+    partidos_mostrar = []
+    for partido in partidos_proximos:
+        # Buscamos si el usuario ya pronosticó
+        prediccion = Prediction.objects.filter(user=request.user, match=partido).first()
+        
+        # Guardamos el objeto completo para usarlo en el template
+        partidos_mostrar.append({
+            'partido': partido,
+            'prediccion': prediccion,
+            'competition': partido.competition # Necesario para agrupar
+        })
 
     return render(request, 'core/home.html', {
-        'competencia_activa': competencia_activa,
-        'rondas_disponibles': rondas_nombres,   # <--- Esto llena el menú
-        'ronda_actual': ronda_seleccionada,     # <--- Esto marca la opción
-        'partidos_mostrar': grupo_activo        # <--- Esto llena la lista
+        'partidos_hoy': partidos_mostrar, # Esta es la lista nueva
+        'fecha_hoy': ahora,
+        'competencia_activa': competencia_activa 
     })
 
 @login_required # ¡Ojo! Solo usuarios logueados pueden predecir
@@ -543,11 +519,28 @@ def cargar_fixture_inicial(request, id_liga): # <--- AHORA RECIBE EL ID
         return HttpResponse(f"❌ Error crítico: {e}")
     
 def cambiar_competencia(request, comp_id):
-    # Guardamos la elección en la "memoria" del navegador (Sesión)
+    # 1. Guardamos la elección con fuerza
     request.session['competencia_id'] = comp_id
+    request.session.modified = True # Asegura que se guarde
     
-    # Redirigimos al usuario a la misma página donde estaba (o al home si falla)
-    return redirect(request.META.get('HTTP_REFERER', 'home'))
+    # 2. Detectamos de dónde viene el clic
+    referer = request.META.get('HTTP_REFERER', '')
+    
+    print(f"🔄 Cambiando a Liga ID {comp_id}. Vengo de: {referer}") # Para depurar
+
+    # 3. Redirecciones inteligentes
+    if 'fixture' in referer: 
+        return redirect('fixture')
+    
+    if 'tabla' in referer: 
+        return redirect('tabla')
+    
+    # Si estamos en CUALQUIER página de pronósticos o predicción
+    if 'pronosticos' in referer or 'predecir' in referer: 
+        return redirect('pronosticos_liga', competition_id=comp_id)
+    
+    # Por defecto al Home
+    return redirect('home')
 
 # En core/views.py
 
@@ -932,4 +925,56 @@ def configurar_password(request):
         'form': form, 
         'titulo': titulo,
         'tiene_pass': request.user.has_usable_password()
+    })
+
+@login_required
+def pronosticos_general(request):
+    """
+    Esta es la función que faltaba.
+    Si entran a /pronosticos/ sin ID, revisamos si hay memoria o mostramos vacío.
+    """
+    comp_id = request.session.get('competencia_id')
+    if comp_id:
+        return redirect('pronosticos_liga', competition_id=comp_id)
+    
+    # Si no hay memoria, carga página vacía (el HTML mostrará el aviso)
+    return render(request, 'core/pronosticos.html', {'competencia_activa': None})
+
+@login_required
+def pronosticos_liga(request, competition_id):
+    """
+    Esta es la función principal de pronósticos con ID.
+    """
+    request.session['competencia_id'] = competition_id # Guardar en memoria
+    competencia_activa = get_object_or_404(Competition, id=competition_id)
+    
+    partidos = Match.objects.filter(competition=competencia_activa).order_by('date')
+
+    # Agrupación por Rondas
+    grupos_temp = {}
+    rondas_nombres = [] 
+    for partido in partidos:
+        ronda = partido.round_name
+        if ronda not in grupos_temp:
+            grupos_temp[ronda] = []
+            rondas_nombres.append(ronda)
+        
+        pred = Prediction.objects.filter(user=request.user, match=partido).first()
+        grupos_temp[ronda].append({'partido': partido, 'prediccion': pred})
+
+    # Selector de Fecha
+    ronda_seleccionada = request.GET.get('ronda')
+    if not ronda_seleccionada and rondas_nombres:
+        hoy = timezone.now()
+        partido_futuro = partidos.filter(date__gte=hoy).first()
+        ronda_seleccionada = partido_futuro.round_name if partido_futuro else rondas_nombres[-1]
+
+    grupo_activo = grupos_temp.get(ronda_seleccionada, [])
+    grupo_activo.sort(key=lambda x: x['partido'].date)
+
+    return render(request, 'core/pronosticos.html', {
+        'competencia_activa': competencia_activa,
+        'rondas_disponibles': rondas_nombres,
+        'ronda_actual': ronda_seleccionada,
+        'partidos_mostrar': grupo_activo
     })

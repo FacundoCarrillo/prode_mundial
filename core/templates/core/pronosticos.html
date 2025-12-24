@@ -1,0 +1,159 @@
+{% extends 'core/base.html' %} 
+
+{% block content %}
+
+    {% if not competencia_activa %}
+        <div class="flex flex-col items-center justify-center py-20 text-center bg-white rounded-2xl shadow-sm border border-slate-100 mt-4">
+            <div class="bg-yellow-50 p-6 rounded-full mb-6 animate-bounce">
+                <span class="text-5xl">👆</span>
+            </div>
+            <h2 class="text-3xl font-black text-slate-900 mb-3">Selecciona una Liga</h2>
+            <p class="text-gray-500 text-lg max-w-md mb-8">
+                Para ver y cargar tus pronósticos, primero debes elegir una competición en el menú superior.
+            </p>
+            <div class="inline-block bg-slate-900 text-white px-6 py-2 rounded-full text-xs font-bold uppercase tracking-wider animate-pulse">
+                Elige arriba
+            </div>
+        </div>
+
+    {% else %}
+
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight mb-2">Pronósticos</h1>
+            <div class="inline-flex items-center gap-2 bg-white px-4 py-1.5 rounded-full border border-gray-200 shadow-sm">
+                <span class="text-2xl">🏆</span>
+                <span class="font-bold text-slate-700 uppercase tracking-wide text-sm">{{ competencia_activa.name }}</span>
+            </div>
+        </div>
+
+        <div class="max-w-4xl mx-auto mb-8 px-4 sm:px-0">
+            <label for="ronda-select" class="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 ml-1">Filtrar por Fecha</label>
+            <div class="relative">
+                <select id="ronda-select" 
+                        onchange="window.location.href='?ronda=' + this.value"
+                        class="appearance-none block w-full pl-4 pr-10 py-3 text-base border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-xl shadow-sm bg-white cursor-pointer hover:border-blue-300 transition font-bold text-slate-700">
+                    
+                    {% for nombre_ronda in rondas_disponibles %}
+                        <option value="{{ nombre_ronda }}" {% if nombre_ronda == ronda_actual %}selected{% endif %}>
+                            {{ nombre_ronda }}
+                        </option>
+                    {% endfor %}
+                    
+                    {% if not rondas_disponibles %}
+                        <option>No hay fechas disponibles</option>
+                    {% endif %}
+                </select>
+                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-500">
+                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <div class="max-w-4xl mx-auto space-y-4 pb-12">
+            {% if partidos_mostrar %}
+                {% for item in partidos_mostrar %}
+                <div id="match-{{ item.partido.id }}" class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden p-4 hover:shadow-md transition duration-300 flex flex-col sm:flex-row items-center justify-between gap-6 relative group">
+                    
+                    <div class="text-center sm:text-left min-w-[90px] flex flex-col items-center sm:items-start">
+                        {% if item.partido.status == 'IN_PLAY' %}
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 animate-pulse mb-1">
+                                ● EN VIVO
+                            </span>
+                        {% elif item.partido.status == 'FINISHED' %}
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-600 mb-1">
+                                FINALIZADO
+                            </span>
+                        {% else %}
+                            <span class="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded mb-1">
+                                {{ item.partido.date|date:"H:i" }}
+                            </span>
+                        {% endif %}
+                        <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{{ item.partido.date|date:"D d M" }}</span>
+                    </div>
+
+                    <div class="flex-grow flex items-center justify-center w-full sm:w-auto gap-4">
+                        
+                        <div class="flex items-center justify-end flex-1 gap-3 text-right">
+                            <span class="font-bold text-slate-800 text-sm md:text-base leading-tight">{{ item.partido.home_team.name }}</span>
+                            {% if item.partido.home_team.logo %}
+                                <img src="{{ item.partido.home_team.logo }}" class="w-10 h-10 object-contain drop-shadow-sm" alt="{{ item.partido.home_team.name }}">
+                            {% else %}
+                                <div class="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-lg">🏠</div>
+                            {% endif %}
+                        </div>
+
+                        <div class="font-black text-2xl text-slate-900 bg-slate-100 px-4 py-2 rounded-lg min-w-[80px] text-center tracking-widest shadow-inner">
+                            {% if item.partido.status == 'FINISHED' or item.partido.status == 'IN_PLAY' %}
+                                {{ item.partido.home_goals }}-{{ item.partido.away_goals }}
+                            {% else %}
+                                <span class="text-gray-400 text-xl font-bold">VS</span>
+                            {% endif %}
+                        </div>
+
+                        <div class="flex items-center justify-start flex-1 gap-3 text-left">
+                            {% if item.partido.away_team.logo %}
+                                <img src="{{ item.partido.away_team.logo }}" class="w-10 h-10 object-contain drop-shadow-sm" alt="{{ item.partido.away_team.name }}">
+                            {% else %}
+                                <div class="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-lg">✈️</div>
+                            {% endif %}
+                            <span class="font-bold text-slate-800 text-sm md:text-base leading-tight">{{ item.partido.away_team.name }}</span>
+                        </div>
+                    </div>
+
+                    <div class="w-full sm:w-auto min-w-[140px] flex justify-center sm:justify-end">
+                        {% if item.partido.status == 'FINISHED' %}
+                            <div class="flex flex-col items-center bg-gray-50 px-4 py-2 rounded-lg border border-gray-200">
+                                <span class="text-[10px] font-bold text-gray-400 uppercase mb-1">Tu Pronóstico</span>
+                                <div class="font-mono font-bold text-slate-700 text-lg">
+                                    {% if item.prediccion %}
+                                        {{ item.prediccion.predicted_home }} - {{ item.prediccion.predicted_away }}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </div>
+                                {% if item.prediccion %}
+                                    <div class="mt-1">
+                                        {% if item.prediccion.points > 0 %}
+                                            <span class="text-[10px] font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded-full border border-green-200 shadow-sm">
+                                                +{{ item.prediccion.points }} Pts
+                                            </span>
+                                        {% else %}
+                                            <span class="text-[10px] font-bold text-gray-400">0 Pts</span>
+                                        {% endif %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        {% else %}
+                            {% if item.prediccion %}
+                                <a href="{% url 'predecir' item.partido.id %}" class="group relative w-full sm:w-auto text-center">
+                                    <div class="bg-blue-50 border border-blue-200 text-blue-700 font-bold py-2 px-6 rounded-lg text-sm transition hover:bg-blue-100 hover:border-blue-300 flex items-center justify-center gap-2">
+                                        <span>✏️</span> {{ item.prediccion.predicted_home }} - {{ item.prediccion.predicted_away }}
+                                    </div>
+                                    <span class="absolute -top-2 -right-2 flex h-3 w-3">
+                                      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                                      <span class="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+                                    </span>
+                                </a>
+                            {% else %}
+                                <a href="{% url 'predecir' item.partido.id %}" class="w-full sm:w-auto text-center bg-slate-900 hover:bg-blue-600 text-white font-bold py-2.5 px-6 rounded-lg text-sm shadow-md hover:shadow-lg transition transform hover:-translate-y-0.5 active:scale-95 flex items-center justify-center gap-2">
+                                    <span>🎲</span> Jugar
+                                </a>
+                            {% endif %}
+                        {% endif %}
+                    </div>
+
+                </div>
+                {% endfor %}
+
+            {% else %}
+                <div class="text-center py-20 bg-white rounded-2xl border-2 border-dashed border-gray-200">
+                    <div class="text-4xl mb-4 opacity-30">📅</div>
+                    <p class="text-gray-500 text-lg font-medium">No hay partidos programados para esta fecha.</p>
+                    <p class="text-sm text-gray-400 mt-2">Intenta seleccionar otra ronda en el filtro de arriba.</p>
+                </div>
+            {% endif %}
+        </div>
+
+    {% endif %} {% endblock %}
