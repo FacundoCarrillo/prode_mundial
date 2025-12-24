@@ -33,16 +33,16 @@
                         <span class="hidden md:inline">PRODE</span>
                     </a>
 
-                    <div x-data="{ open: false }" class="relative">
-                        <button @click="open = !open" @click.outside="open = false" class="flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-full transition border border-slate-700">
-                            {% if competencia_activa %}
-                                <span class="font-bold text-sm uppercase tracking-wide">{{ competencia_activa.name }}</span>
-                            {% else %}
-                                <span class="font-bold text-sm text-red-400">Seleccionar Liga</span>
-                            {% endif %}
-                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                        </button>
-
+                    {% if request.resolver_match.url_name != 'home' %}
+    <div x-data="{ open: false }" class="relative">
+        <button @click="open = !open" @click.outside="open = false" class="flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-full transition border border-slate-700">
+            {% if competencia_activa %}
+                <span class="font-bold text-sm uppercase tracking-wide">{{ competencia_activa.name }}</span>
+            {% else %}
+                <span class="font-bold text-sm text-red-400">Seleccionar Liga</span>
+            {% endif %}
+            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+        </button>
                         <div x-show="open" 
                              x-transition:enter="transition ease-out duration-100"
                              x-transition:enter-start="transform opacity-0 scale-95"
@@ -69,8 +69,8 @@
                             {% endfor %}
                         </div>
                     </div>
-                </div>
-
+                {% endif %} </div>
+                    
                 <div class="flex items-center space-x-4">
                     
                     {% if user.is_staff %}
@@ -174,10 +174,10 @@
                    {% endif %}">
                    INICIO
                 </a>
-                <a href="{% if competencia_activa %}{% url 'pronosticos_liga' competencia_activa.id %}{% else %}{% url 'pronosticos_general' %}{% endif %}" 
-                class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition flex-shrink-0
-                {% if 'pronosticos' in request.resolver_match.url_name %}border-blue-500 text-blue-600{% else %}border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300{% endif %}">
-                📝 Pronósticos
+                <a href="{% url 'pronosticos_general' %}" 
+                    class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition flex-shrink-0
+                    {% if 'pronosticos' in request.resolver_match.url_name %}border-blue-500 text-blue-600{% else %}border-transparent text-gray-500 hover:text-gray-700{% endif %}">
+                    📝 Pronósticos
                 </a>
 
                 <a href="{% url 'mis_torneos' %}" 

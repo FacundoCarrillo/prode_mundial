@@ -2,23 +2,68 @@
 
 {% block content %}
 
-    <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
-        <div>
-            <h1 class="text-3xl font-black text-slate-900 tracking-tight">Centro de Partidos</h1>
-            <p class="text-slate-500 font-medium mt-1">
-                📅 Partidos recientes y próximos
-            </p>
+    <div class="flex flex-col gap-6 mb-8">
+        
+        <div class="flex flex-col md:flex-row justify-between items-center gap-4">
+            <div>
+                <h1 class="text-3xl font-black text-slate-900 tracking-tight">Centro de Partidos</h1>
+                <p class="text-slate-500 font-medium mt-1">
+                    📅 Resultados y Próximos Encuentros
+                </p>
+            </div>
+            <div class="hidden md:block">
+                <span class="bg-white border border-gray-200 text-gray-600 px-4 py-2 rounded-full text-sm font-bold shadow-sm flex items-center gap-2">
+                    ⚽ Fútbol Mundial
+                </span>
+            </div>
         </div>
-        <div class="hidden md:block">
-            <span class="bg-white border border-gray-200 text-gray-600 px-4 py-2 rounded-full text-sm font-bold shadow-sm">
-                ⚽ Fútbol Mundial
-            </span>
+
+        <div class="bg-slate-900 rounded-xl shadow-lg flex items-center justify-between px-4 py-3 border border-slate-800 max-w-7xl mx-auto w-full relative z-10">
+            
+            <a href="?fecha={{ fecha_anterior }}" class="text-gray-400 hover:text-white hover:bg-slate-800 p-2 rounded-lg transition duration-200 relative z-50" title="Día Anterior">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                </svg>
+            </a>
+
+            <div class="relative group flex flex-col items-center justify-center flex-grow">
+                
+                <form id="form-calendario" method="get" class="absolute inset-0 z-40 w-full h-full opacity-0 cursor-pointer">
+                    <input type="date" name="fecha" 
+                           class="w-full h-full cursor-pointer"
+                           style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"
+                           onclick="try{this.showPicker()}catch(e){}" 
+                           onchange="document.getElementById('form-calendario').submit();">
+                </form>
+
+                <h2 class="text-white font-black text-lg md:text-xl uppercase tracking-wider flex items-center justify-center gap-2 group-hover:text-yellow-400 transition select-none">
+                    {{ texto_fecha }}
+                    <span class="text-xs text-gray-500 group-hover:text-yellow-400 transition">▼</span>
+                </h2>
+
+                {% if not es_hoy %}
+                    <a href="{% url 'home' %}" class="text-[10px] font-bold text-yellow-400 hover:text-yellow-300 uppercase tracking-widest mt-1 block transition relative z-50 hover:underline">
+                        Volver a Hoy
+                    </a>
+                {% else %}
+                    <span class="text-[9px] text-gray-600 font-bold uppercase tracking-widest mt-1">
+                        Toca para cambiar
+                    </span>
+                {% endif %}
+            </div>
+
+            <a href="?fecha={{ fecha_siguiente }}" class="text-gray-400 hover:text-white hover:bg-slate-800 p-2 rounded-lg transition duration-200 relative z-50" title="Día Siguiente">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+            </a>
+
         </div>
     </div>
 
     {% regroup partidos_hoy by competition as partidos_por_liga %}
 
-    <div class="space-y-8 pb-12">
+    <div class="space-y-8 pb-12 max-w-7xl mx-auto">
         
         {% for liga in partidos_por_liga %}
             <div class="bg-white rounded-2xl shadow-lg shadow-slate-200/50 overflow-hidden border border-slate-100">
@@ -30,7 +75,7 @@
                         </h2>
                     </div>
                     
-                    <a href="{% url 'pronosticos_liga' liga.grouper.id %}" class="text-xs font-bold text-blue-400 hover:text-white transition flex items-center gap-1">
+                    <a href="{% url 'pronosticos_liga' liga.grouper.id %}" class="text-xs font-bold text-blue-400 hover:text-white transition flex items-center gap-1 bg-slate-800 px-3 py-1 rounded-full border border-slate-700 hover:border-slate-500">
                         Ver Torneo 
                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
                     </a>
@@ -124,12 +169,15 @@
             </div>
         {% empty %}
             <div class="flex flex-col items-center justify-center py-20 bg-white rounded-3xl border border-dashed border-gray-300 shadow-sm text-center px-4">
-                <div class="bg-blue-50 p-4 rounded-full mb-4">
-                    <svg class="w-12 h-12 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                <div class="bg-slate-50 p-4 rounded-full mb-4">
+                    <span class="text-4xl">📅</span>
                 </div>
-                <h3 class="text-xl font-bold text-slate-900">Sin partidos hoy</h3>
-                <p class="text-gray-500 max-w-sm mt-2">No encontramos partidos programados para hoy ni mañana.</p>
-                <a href="{% url 'mis_torneos' %}" class="mt-6 text-blue-600 font-bold hover:underline">Ver Mis Torneos →</a>
+                <h3 class="text-xl font-bold text-slate-900">Sin partidos para esta fecha</h3>
+                <p class="text-gray-500 max-w-sm mt-2 mb-6">No encontramos partidos programados en nuestra base de datos para el día seleccionado.</p>
+                
+                <a href="{% url 'home' %}" class="bg-slate-900 text-white px-6 py-2 rounded-full font-bold hover:bg-slate-800 transition shadow-lg">
+                    Volver a Hoy
+                </a>
             </div>
         {% endfor %}
 

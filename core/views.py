@@ -18,50 +18,73 @@ from operator import attrgetter
 from django.db.models import Sum, Count, Avg
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.forms import PasswordChangeForm, SetPasswordForm
-from .forms import EditarPerfilForm # Asegúrate de importar el form que acabamos de crear
-
+from .forms import EditarPerfilForm
+from datetime import datetime, timedelta
 # En core/views.py
 
 # En core/views.py
 
 @login_required
 def home(request):
-    # 1. RECUPERAR MEMORIA (Solo para pintar el menú, NO para filtrar los partidos)
+    # 1. RECUPERAR MEMORIA (Solo para pintar el menú)
     comp_id = request.session.get('competencia_id')
     competencia_activa = None
     if comp_id:
         competencia_activa = Competition.objects.filter(id=comp_id).first()
 
-    # 2. DEFINIR RANGO DE FECHAS (Global)
-    # Mostramos partidos de Ayer, Hoy y Mañana para que el inicio no quede vacío
-    ahora = timezone.now()
-    inicio = ahora - timedelta(hours=24)
-    fin = ahora + timedelta(hours=48)
+    # 2. LÓGICA DE FECHAS (CORREGIDA CON LOCALDATE) 🕒
+    fecha_str = request.GET.get('fecha')
     
-    # 3. BUSCAR PARTIDOS DE TODAS LAS LIGAS
-    # Importante: order_by('competition') es vital para el regroup en el HTML
-    partidos_proximos = Match.objects.filter(
-        date__gte=inicio,
-        date__lte=fin
+    # ¡ESTA ES LA CLAVE! Usamos la fecha local de Argentina, no la UTC del servidor
+    hoy = timezone.localdate() 
+
+    if fecha_str:
+        try:
+            fecha_seleccionada = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+        except ValueError:
+            fecha_seleccionada = hoy
+    else:
+        fecha_seleccionada = hoy
+
+    # Calculamos día anterior y siguiente para las flechas
+    dia_anterior = fecha_seleccionada - timedelta(days=1)
+    dia_siguiente = fecha_seleccionada + timedelta(days=1)
+
+    # Definimos la ETIQUETA (El texto del medio)
+    delta = (fecha_seleccionada - hoy).days
+    
+    if delta == 0:
+        texto_fecha = "PARTIDOS DE HOY"
+    elif delta == 1:
+        texto_fecha = "MAÑANA"
+    elif delta == -1:
+        texto_fecha = "AYER"
+    else:
+        # Formato estilo 25/12
+        texto_fecha = fecha_seleccionada.strftime("%d/%m")
+
+    # 3. BUSCAR PARTIDOS (Solo del día seleccionado)
+    partidos_dia = Match.objects.filter(
+        date__date=fecha_seleccionada # Django convierte esto a tu zona horaria automáticamente
     ).select_related('competition', 'home_team', 'away_team').order_by('competition', 'date')
 
-    # 4. EMPAQUETAR CON PREDICCIONES
+    # 4. EMPAQUETAR
     partidos_mostrar = []
-    for partido in partidos_proximos:
-        # Buscamos si el usuario ya pronosticó
+    for partido in partidos_dia:
         prediccion = Prediction.objects.filter(user=request.user, match=partido).first()
-        
-        # Guardamos el objeto completo para usarlo en el template
         partidos_mostrar.append({
             'partido': partido,
             'prediccion': prediccion,
-            'competition': partido.competition # Necesario para agrupar
+            'competition': partido.competition
         })
 
     return render(request, 'core/home.html', {
-        'partidos_hoy': partidos_mostrar, # Esta es la lista nueva
-        'fecha_hoy': ahora,
-        'competencia_activa': competencia_activa 
+        'partidos_hoy': partidos_mostrar,
+        'competencia_activa': competencia_activa,
+        'texto_fecha': texto_fecha,
+        'fecha_anterior': dia_anterior.strftime('%Y-%m-%d'),
+        'fecha_siguiente': dia_siguiente.strftime('%Y-%m-%d'),
+        'es_hoy': (fecha_seleccionada == hoy)
     })
 
 @login_required # ¡Ojo! Solo usuarios logueados pueden predecir
@@ -200,8 +223,8 @@ def actualizar_partidos_web(request):
 
                 # Buscar en DB
                 partido_db = Match.objects.filter(
-                    home_team__name__icontains=local,
-                    away_team__name__icontains=visitante
+                    home_team_name_icontains=local,
+                    away_team_name_icontains=visitante
                 ).first()
 
                 if partido_db:
@@ -315,7 +338,7 @@ def buscar_torneo(request):
     if query:
         # Buscamos por Nombre o por Código exacto
         resultados = Tournament.objects.filter(
-            Q(name__icontains=query) | Q(code__iexact=query)
+            Q(name_icontains=query) | Q(code_iexact=query)
         ).exclude(members=request.user) # Excluir los que ya estoy unido
 
     return render(request, 'core/buscar_torneo.html', {'resultados': resultados, 'query': query})
@@ -930,16 +953,25 @@ def configurar_password(request):
 @login_required
 def pronosticos_general(request):
     """
-    Esta es la función que faltaba.
-    Si entran a /pronosticos/ sin ID, revisamos si hay memoria o mostramos vacío.
+    Esta vista maneja el clic en el botón 'Pronósticos' del menú principal.
     """
+    # 1. ¿El usuario ya tiene una liga en memoria?
     comp_id = request.session.get('competencia_id')
+    
+    # 2. Si NO tiene, buscamos la primera disponible (Por defecto)
+    if not comp_id:
+        primera = Competition.objects.first()
+        if primera:
+            comp_id = primera.id
+            # ¡Importante! La guardamos en sesión para que quede seleccionada
+            request.session['competencia_id'] = comp_id 
+    
+    # 3. Redirigimos a la liga (ya sea la de memoria o la por defecto)
     if comp_id:
         return redirect('pronosticos_liga', competition_id=comp_id)
-    
-    # Si no hay memoria, carga página vacía (el HTML mostrará el aviso)
-    return render(request, 'core/pronosticos.html', {'competencia_activa': None})
-
+    else:
+        # Caso extremo: No hay ninguna liga cargada en el sistema
+        return render(request, 'core/pronosticos.html', {'competencia_activa': None})
 @login_required
 def pronosticos_liga(request, competition_id):
     """
