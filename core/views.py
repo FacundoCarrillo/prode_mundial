@@ -63,21 +63,39 @@ def home(request):
         # Formato estilo 25/12
         texto_fecha = fecha_seleccionada.strftime("%d/%m")
 
-    # 3. BUSCAR PARTIDOS (Solo del día seleccionado)
+    # --- AQUÍ EMPIEZA LA MAGIA DE OPTIMIZACIÓN ---
+
+    # 1. Traemos TODOS los partidos del día (1er Viaje a Texas)
     partidos_dia = Match.objects.filter(
-        date__date=fecha_seleccionada # Django convierte esto a tu zona horaria automáticamente
+        date__date=fecha_seleccionada
     ).select_related('competition', 'home_team', 'away_team').order_by('competition', 'date')
 
-    # 4. EMPAQUETAR
+    # 2. Truco Ninja: Sacamos los IDs de esos partidos
+    ids_partidos = [p.id for p in partidos_dia]
+
+    # 3. Traemos TODAS las predicciones DE UNA SOLA VEZ (2do Viaje a Texas y último)
+    predicciones_raw = Prediction.objects.filter(
+        user=request.user, 
+        match_id__in=ids_partidos
+    )
+
+    # 4. Convertimos la lista de predicciones en un Diccionario para búsqueda instantánea en RAM
+    # Clave: ID del partido, Valor: Objeto Predicción
+    preds_dict = {pred.match_id: pred for pred in predicciones_raw}
+
+    # 5. Empaquetamos sin viajar más a la base de datos
     partidos_mostrar = []
     for partido in partidos_dia:
-        prediccion = Prediction.objects.filter(user=request.user, match=partido).first()
+        # Buscamos en el diccionario (Memoria RAM, velocidad luz), NO en la base de datos
+        prediccion = preds_dict.get(partido.id) 
+        
         partidos_mostrar.append({
             'partido': partido,
             'prediccion': prediccion,
             'competition': partido.competition
         })
 
+    # ... (Return render igual que antes) ...
     return render(request, 'core/home.html', {
         'partidos_hoy': partidos_mostrar,
         'competencia_activa': competencia_activa,
