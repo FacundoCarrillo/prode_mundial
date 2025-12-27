@@ -168,19 +168,24 @@ ACCOUNT_EMAIL_VERIFICATION = 'none'
 # 4. El usuario también es obligatorio (necesitamos un nombre para la tabla de posiciones)
 ACCOUNT_USERNAME_REQUIRED = True
 
-# --- SEGURIDAD PARA RENDER ---
-CSRF_TRUSTED_ORIGINS = ['https://prode-mundial-kczg.onrender.com']
-
-# --- CONFIGURACIÓN PARA RENDER (SOLUCIÓN ERROR 400) ---
+# --- CONFIGURACIÓN DE SEGURIDAD PARA PRODUCCIÓN (DIGITALOCEAN) ---
+# Leemos la variable DEBUG desde el entorno (en DO pusimos DEBUG=False)
+# Si no encuentra la variable, por defecto es True (para tu compu)
 import os
+DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 
-# Si estamos en Render, forzamos HTTPS
-if os.environ.get('RENDER'):
-    # Le avisa a Django que está detrás de un proxy seguro
+ALLOWED_HOSTS = ['*'] # Puedes dejarlo así o poner tu dominio de DO
+
+if not DEBUG:
+    # 1. Seguridad HTTPS
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-    # Forza a que los links de login sean HTTPS
-    ACCOUNT_DEFAULT_HTTP_PROTOCOL = 'https'
-    # Seguridad extra recomendada
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+    
+    # 2. Orígenes de Confianza (IMPORTANTE para Google Login)
+    # Reemplaza ESTA URL por la tuya de DigitalOcean (sin la barra final /)
+    CSRF_TRUSTED_ORIGINS = ['https://futprode-mr3s3.ondigitalocean.app/']
+    
+    # 3. Forzar HTTPS en los links de login
+    ACCOUNT_DEFAULT_HTTP_PROTOCOL = 'https'

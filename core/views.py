@@ -972,6 +972,7 @@ def pronosticos_general(request):
     else:
         # Caso extremo: No hay ninguna liga cargada en el sistema
         return render(request, 'core/pronosticos.html', {'competencia_activa': None})
+    
 @login_required
 def pronosticos_liga(request, competition_id):
     """
